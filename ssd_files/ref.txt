@@ -1,0 +1,27 @@
+key words
+    let 
+    goto
+    gosub .... return
+    if  <then | goto> 
+    print
+    input
+    end
+    list
+    clear
+    run 
+    rem
+
+functions
+    rnd
+    usr   to be removed for our use
+
+operators
+    ()
+    >
+    <
+    >=
+    <=
+    <>
+    ><
+
+

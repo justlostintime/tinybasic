@@ -16,6 +16,7 @@ extern "C" {
 #include "lwip/tcp.h"
 
 #include "tcp_datatypes.h"
+#include "user.h"
 
 
 /*
@@ -32,11 +33,13 @@ typedef void (*tcp_recv_cb_t)(const uint8_t *data, size_t len);
 typedef void (*tcp_conn_cb_t)(bool connected);
 
 /* Initialize the TCP server subsystem. Must be called before other functions. */
-extern  TCP_SERVER_T * tcp_server_init(void);
+extern  user_context_t * tcp_server_init(void);
 extern  err_t tcp_server_close(void *arg);
-extern  err_t tcp_server_result(void *arg, int status);
+extern  err_t tcp_close_client(user_context_t *user );
+extern  err_t tcp_close_client_by_pcb(struct tcp_pcb *tpcb );
+extern  err_t tcp_server_result(void *arg, int status, char * msg);
 extern  err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-extern  err_t tcp_server_send_data(void *arg, struct tcp_pcb *tpcb);
+extern  err_t tcp_server_send_data(void *arg, char * msg);
 extern  err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p);
 extern  err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb);
 extern  void tcp_server_err(void *arg, err_t err);

@@ -35,7 +35,10 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(tinybasic tinybasic.c picow_tcp_server.c)
+add_executable(tinybasic tinybasic.c picow_tcp_server.c user.c hw_config.c FileSystem.c TelnetServer.c 
+               interpreter.c debug_user.c)
+               
+add_subdirectory(lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI build)
 
 pico_set_program_name(tinybasic "tinybasic")
 pico_set_program_version(tinybasic "0.1")
@@ -46,12 +49,18 @@ pico_enable_stdio_usb(tinybasic 1)
 
 # Add the standard library to the build
 target_link_libraries(tinybasic
-        pico_stdlib)
+        pico_multicore
+        pico_stdlib
+        )
 
 # Add the standard include files to the build
 target_include_directories(tinybasic PRIVATE
         ${CMAKE_CURRENT_LIST_DIR}
         ${CMAKE_CURRENT_LIST_DIR}/include
+        ${CMAKE_CURRENT_LIST_DIR}/lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI/include
+        ${CMAKE_CURRENT_LIST_DIR}/lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI/sd_driver
+        ${CMAKE_CURRENT_LIST_DIR}/lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI/ff15/source
+        
 )
 
 # Add any user requested libraries
@@ -60,6 +69,7 @@ target_link_libraries(tinybasic
         hardware_timer
         hardware_clocks
         pico_cyw43_arch_lwip_threadsafe_background
+        FatFs_SPI
         )
 
 pico_add_extra_outputs(tinybasic)
