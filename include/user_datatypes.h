@@ -8,9 +8,11 @@
 #define USER_TIMEOUT_MS   (10 * 60 * 1000) // 10 minutes inactivity timeout
 
 #define user_new_connect 0                 // when a new connection before logging in
-#define user_shell  1                      // currently in shell command mode
-#define user_basic  2                      // currently running basic
-#define user_help   3                      // currently in help system
+#define user_wait_loggin 1                 // Set when waiting for a login message
+#define user_shell  2                      // currently in shell command mode
+#define user_basic  3                      // currently running basic
+#define user_help   4                      // currently in help system
+#define user_removed 5                     // a user context is to be removed
 
 #define io_none 0
 #define io_complete 1

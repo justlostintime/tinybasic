@@ -18,10 +18,19 @@ bool delete_user_context(user_context_t *user);
 void update_user_activity(user_context_t *user);
 user_context_t * find_user_by_tcp_pcb(struct tcp_pcb *pcb);
 user_context_t * find_user_by_username(const char *username);
+
+bool add_to_list(user_context_t *new_user, user_context_t **list, semaphore_t *sema, char *errmsg);
 bool add_user_to_list(user_context_t *new_user);
+bool add_user_to_waiting(user_context_t *new_user);
+
+bool remove_from_list(user_context_t *new_user, user_context_t **list, semaphore_t *sema);
+bool remove_user_from_waiting(user_context_t *user);
+bool remove_user_from_list(user_context_t *user);
+
+
 int count_active_users();
 void user_print_info();
-bool remove_user_from_list(user_context_t *user);
+
 user_context_t *login_user(user_context_t *user, char *userinfo);
 bool end_user_session(struct tcp_pcb *tpcb);
 void userShell(user_context_t * user) ;

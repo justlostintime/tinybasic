@@ -23,11 +23,17 @@ extern void UserInitTinyBasic(user_context_t *user ,char * ILtext);
 extern void ConfigureTinyBasic();
 extern void RunTinyBasic();
 extern bool SwitchUser;
-extern user_context_t *CurrentUser;
+extern user_context_t *CurrentUser;         // the current tiny basic user being executed
+extern user_context_t *NewUsers;            // new users to be added to user list
 extern user_context_t *RootUser;            // Pointer to the root user
 extern user_context_t *DebugUser;           // Pointer to the debug user
 
 extern semaphore_t user_list_sema;          // protect the user list against bad things
+extern semaphore_t new_user_list_sema;      // protect the user list against bad things
+
+const char * Greeting = "Welcome to TinyBasic 1.0 Multi-user basic server\n\rlogon format 'name:password' or new 'name?password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rLog in : ";
+const char * UserLogin = "Log in : ";
+const char * UserPrompt = " > ";
 
 void init_filesys(void);
 void init_telnet_server(void);
@@ -78,7 +84,6 @@ bool next_user_callback(struct repeating_timer *t) {
     SwitchUser = true;
 }
 
-
 void Console_Data_Available(void *param) {
     user_context_t *user = param;
     int value = getchar_timeout_us(0);
@@ -89,14 +94,15 @@ void Console_Data_Available(void *param) {
     user->lineLength++;
 }
 
-
 int main()
 {
     long counter = 0;
+    sem_init(&user_list_sema, 1, 1);
+    sem_init(&new_user_list_sema, 1, 1);
+
     stdio_init_all();
 
-    sleep_ms(10000);  // wait for console to start
-    sem_init(&user_list_sema, 1, 1);
+    sleep_ms(5000);  // wait for console to start
 
     struct mallinfo m = mallinfo();
     uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
@@ -132,7 +138,7 @@ int main()
     // For more examples of timer use see https://github.com/raspberrypi/pico-examples/tree/master/timer
 
     DebugUser = init_debug_session(RootUser->state.server_pcb);
-    add_user_to_list(DebugUser);
+    add_user_to_waiting(DebugUser);
 
     printf("waiting for users to log in...\n");
 
@@ -148,17 +154,63 @@ int main()
 
     
     while (true) {
-        user_context_t *user = get_user_list();
+        user_context_t *user;
+        sem_acquire_blocking(&new_user_list_sema);
+        if(NewUsers){
+            user = NewUsers;
+            NewUsers = 0;
+            sem_release(&new_user_list_sema);
+            printf("Transfering user from waiting to active:");
+            while(user) {
+                               user_context_t *next_user = user->next;
+                user->next = NULL;
+                add_user_to_list(user);
+                printf("uid(%8X),",user->state.client_pcb);
+                user = next_user;
+            }
+            printf(" : Transfer Complete\n");
+        } else {
+            sem_release(&new_user_list_sema);
+        }
+
+        user = get_user_list();
 
         while(user){
-            if(user->logged_in) {
-                if(user->level == user_shell) {
+
+            switch(user->level) {
+                case user_new_connect:
+                    if(user->state.client_pcb) {
+                        tcp_server_send_message(user,(char *)Greeting);
+                        user->level++; // bump to wait login
+                    }
+                    break;
+
+                case user_wait_loggin:
+                    user_context_t *new_user;
+                    if(user->state.recv_len) { // we have something to proceess
+                        new_user = login_user(user,user->state.buffer_recv);
+                        if(new_user)  {
+                            user = new_user;
+                            user->level++;            // bump to shell available
+                            tcp_server_send_message(user,(char *)UserPrompt);
+                        } else {
+                            tcp_server_send_message(user,(char *)UserLogin);
+                        }
+
+                    }
+                    user->state.recv_len = 0;
+                    break;
+
+                case user_shell:
                     if(user->state.recv_len > 0) {
                         userShell(user);
+                        if (user->level == user_shell)tcp_server_send_message(user,(char *)UserPrompt);
+                        user->state.recv_len = 0;
                     }
-                } else {
-                    if (user->level == user_basic) {
-                        if(user->pending_console_read) {
+                    break;
+
+                case user_basic:
+                    if(user->pending_console_read) {
                             char value = user->linebuffer[user->lineIndex];
                             if(user->SystemUser) {
                                 putchar(value);
@@ -170,16 +222,23 @@ int main()
                                 user->WaitingRead = io_waiting;
                             }
                             user->pending_console_read--;
-                        } else {
-                            CurrentUser = user;
-                            RunTinyBasic();
-                        }
-                    }
-                }
+                    } 
+                    CurrentUser = user;
+                    RunTinyBasic();
+                    break;
+
+                case user_removed:    // when a user is to be removed and the connection closed
+                    tcp_close_client(user);
+                    remove_user_from_list(user);
+                    delete_user_context(user);
+                    printf(",user removed from system\n");
+                    user = get_user_list();
+                    continue;
+
+                default:
+                   printf("Unknown User state %d",user->level);
             }
             user = user->next;
-        }
-        
-        //sleep_ms(500);
+        }  
     }
 }

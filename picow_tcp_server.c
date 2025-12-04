@@ -20,11 +20,6 @@
 extern char __StackLimit, __bss_end__;
 extern struct tcp_pcb *tcp_active_pcbs;
 
-const char * Greeting = "Welcome to TinyBasic 1.0 Multi-user basic server\n\rlogon format 'name:password' or new 'name?password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rEnter Password : ";
-const char * PasswordInfo = "Enter Password : ";
-const char * UserPrompt = " > ";
-
-
 user_context_t * tcp_server_init(void) {
     user_context_t *user  =  create_user_context(NULL, NULL,true);
     if (!user) {
@@ -71,23 +66,7 @@ err_t tcp_close_client_by_pcb(struct tcp_pcb *tpcb ) {
 err_t tcp_close_client(user_context_t *user ) {
     struct tcp_pcb *tpcb = user->state.client_pcb;
     err_t err = ERR_OK;
-    // user_context_t *user = find_user_by_tcp_pcb(tpcb);
-    if (user) {
-        DEBUG_printf("Removing user context for %s uid %d id %8X\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
-        if(remove_user_from_list(user)) {
-            DEBUG_printf("User context removed from active list for %s uid %d id %8X\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
-        } else {
-            DEBUG_printf("Failed to remove user context from active list for %s uid %d id %8X\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
-        }
-        delete_user_context(user);
-    } else {
-        DEBUG_printf("No user context found for %s uid %d id %8X\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
-    }   
-
-    tcp_close_client_by_pcb(tpcb);
-
-    user_print_info();
-
+    err = tcp_close_client_by_pcb(tpcb);
     return err;
 }
 
@@ -139,6 +118,39 @@ err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     return ERR_OK;
 }
 
+// used to send a message to a client when at the level no state or user assigned
+err_t tcp_server_sent_no_user(void *arg, struct tcp_pcb *tpcb, u16_t len) {
+   printf("tcb direct error message sent %d bytes",len);
+   tcp_close(tpcb);
+}
+
+// Added version that send to pcb directly
+err_t tcp_server_pcb_message(void * arg, char * msg) {
+    struct tcp_pcb *tpcb = arg;
+
+    int buflen = strlen(msg);
+
+    if (buflen > BUF_SIZE-1){
+        buflen = BUF_SIZE;
+    }
+
+    tcp_arg(tpcb,NULL);
+    tcp_sent(tpcb, tcp_server_sent_no_user);
+
+   // printf("tcp_server_send_data - Copied data to buffer\n");
+    DEBUG_printf("TCB Writing %ld bytes to client %s port %d id %8X : %s\n", strlen(msg),
+                 ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb,msg);
+
+    cyw43_arch_lwip_check();
+
+    err_t err = tcp_write(tpcb, msg, buflen, TCP_WRITE_FLAG_COPY);
+
+    if (err != ERR_OK) {
+        DEBUG_printf("Failed to write data %d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
+    }
+    return err;
+}
+
 // updated to accept null terminated string to send
 err_t tcp_server_send_data(void *arg,char *senddata)
 {
@@ -166,23 +178,31 @@ err_t tcp_server_send_data(void *arg,char *senddata)
     // can use this method to cause an assertion in debug mode, if this method is called when
     // cyw43_arch_lwip_begin IS needed
 
-    //cyw43_arch_lwip_check();
+    cyw43_arch_lwip_check();
     //printf("tcp_server_send_data - cyw43_arch_lwip_check() complete \n");
 
     err_t err = tcp_write(tpcb, state->buffer_sent, buflen, TCP_WRITE_FLAG_COPY);
-    user->WaitingWrite = io_waiting;
 
     if (err != ERR_OK) {
         DEBUG_printf("Failed to write data %d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
-        return tcp_server_result(user, -1, "tcp_server_send_data");
+    } else {
+        user->WaitingWrite = io_waiting;
     }
-    return ERR_OK;
+    return err;
+}
+
+// Added version that requires use of the begin and end calls
+err_t tcp_server_send_message(void * arg, char * msg) {
+    err_t err;
+    cyw43_arch_lwip_begin();
+    err = tcp_server_send_data(arg,msg);
+    cyw43_arch_lwip_end();
+    return err;
 }
 
 err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err) {
     user_context_t *user = (user_context_t*)arg;
     TCP_SERVER_T *state = &user->state;
-    state->recv_len = 0;
 
     if (!p) {
         DEBUG_printf("tcp_server_recv: remote closed %s uid %d error %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,err);
@@ -216,40 +236,18 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     DEBUG_printf("Received data from %s port %d id %8X len %d: %s\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port, 
                 tpcb, state->recv_len, (char *)&state->buffer_recv);
 
-    // Process the received data
-    if (!user->logged_in) {
-        DEBUG_printf("Attempting login for %s uid %d with info: %s\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port, (char *)&state->buffer_recv);
-        user = login_user(user, (char *)&state->buffer_recv); // may change if a user has not logged in but exists
-        if (!user) {
-            DEBUG_printf("Login failed for %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
-            // send login failed message
-            tcp_server_send_data(user, "Login failed. Try again.\n\rEnter Password : ");
-        } else {
-            DEBUG_printf("Login succeeded for %s uid %d as user %s\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,user->username);
-            // send welcome message
-            user->level++;
-            // user_print_info();
-            tcp_server_send_data(user, "Login succeeded.\n\r > ");
-           
-        }
-    } else {
-        if(user->level == user_basic) {
-            if (state->buffer_recv[ state->recv_len-1] == '\n') state->recv_len--;
-            memcpy(&user->linebuffer,&state->buffer_recv,state->recv_len);
-            user->lineLength = state->recv_len;
-            user->lineIndex = state->recv_len-1;
-            user->lineReadPos = 0;
-            user->WaitingRead = io_waiting;
-            user->pending_console_read=1;
-            user->linebuffer[user->lineLength] = '\0';
-            DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
-            state->recv_len = 0;
-        }
+    if(user->level == user_basic) {
+        if (state->buffer_recv[ state->recv_len-1] == '\n') state->recv_len--;
+        memcpy(&user->linebuffer,&state->buffer_recv,state->recv_len);
+        user->lineLength = state->recv_len;
+        user->lineIndex = state->recv_len-1;
+        user->lineReadPos = 0;
+        user->WaitingRead = io_waiting;
+        user->pending_console_read=1;
+        user->linebuffer[user->lineLength] = '\0';
+        DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
+        state->recv_len = 0;
     }
-
-    // for now just delete and print the recieved content
-    DEBUG_printf("Completed processing %s port %d id %8X len %d: %s\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,
-                  tpcb, state->recv_len ,(char *)&state->buffer_recv);
 
     return ERR_OK;
 }
@@ -271,9 +269,9 @@ void tcp_server_err(void *arg, err_t err) {
 }
 
 err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
-    user_context_t *user = (user_context_t*)arg;
-    TCP_SERVER_T *state = &user->state;
-    if (err != ERR_OK || client_pcb == NULL) { 
+    user_context_t *user = (user_context_t*)arg;       // in this case it is the server user root
+    TCP_SERVER_T *state = &user->state;                // it is the root users state we see
+    if (err != ERR_OK || client_pcb == NULL) {         // check if it just failed all together
         DEBUG_printf("Failure in accept error=%d pcb=%6X Last Error=%d\n",err,client_pcb,state->last_err);
         tcp_server_result(arg, err, "tcp_server_accept");
         return ERR_OK;
@@ -281,12 +279,12 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
 
     DEBUG_printf("Client connected %s : uid %d : pcbid : %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
     
-    //state->client_pcb = client_pcb;
+    // create a new user to use this pcb
     user_context_t * new_user = create_user_context(user->state.server_pcb, client_pcb, false);
     if (!new_user) {
         DEBUG_printf("Failed to create user context for %s uid %d\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port);
-        tcp_close_client(user);
-        return ERR_MEM;
+        tcp_server_pcb_message(client_pcb,"Looks like we are too busy to allow access right now, try again later\n\r");
+        return ERR_OK;
     }
 
     struct mallinfo m = mallinfo();
@@ -294,10 +292,10 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     uint32_t free_sram = total_heap_size - m.uordblks;
     DEBUG_printf("Base Mem used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
 
-    if(add_user_to_list(new_user)) {
-        DEBUG_printf("User context added to active list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+    if(add_user_to_waiting(new_user)) {
+        DEBUG_printf("User context added to waiting list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
     } else {
-        DEBUG_printf("Failed to add user context to active list for %s uid %d id %8H\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+        DEBUG_printf("Failed to add user context to waiting list for %s uid %d id %8H\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
         delete_user_context(new_user);
         tcp_close_client(user);
         return ERR_MEM;
@@ -309,9 +307,8 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     //tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
     tcp_err(client_pcb, tcp_server_err);
     DEBUG_printf(("Connection counter %d\n"), tcp_connection_count());
-    user_print_info();
-    // Send welcome message
-    return tcp_server_send_data(new_user, (char *)Greeting);
+    // user_print_info();
+    tcp_server_send_data(new_user,"Welcome to Pico timeshare\n\r");
 }
 
 bool tcp_server_open(void *arg) {
@@ -344,7 +341,7 @@ bool tcp_server_open(void *arg) {
     user->logged_in = true;
     user->level = user_basic;
     
-    if(add_user_to_list(user)) {
+    if(add_user_to_waiting(user)) {
         DEBUG_printf("Root context added to active list id = %8X\n",state->server_pcb );
     } else {
         DEBUG_printf("Failed to add user context to active list for root\n");

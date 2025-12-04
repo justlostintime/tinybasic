@@ -13,16 +13,19 @@
 extern char __StackLimit, __bss_end__;
 extern void UserInitTinyBasic(user_context_t *user, char * ILtext);
 
-const char * status_text[] = {"New Connect", "Shell","Tiny Basic","Help"};
+const char * status_text[] = {"New Connect", "Waiting Activation","Shell","Tiny Basic","Help","Ending"};
 
 const char * userprompt = " > ";
 
 user_context_t *ActiveUsers = 0;      // Head of linked list of active users
 user_context_t *CurrentUser = 0;      // Pointer to current user for processing
+user_context_t *NewUsers = 0;         // new users to be added to user list
 user_context_t *RootUser = 0;         // Pointer to the root user
 user_context_t *DebugUser = 0;        // Pointer to the debug user
 
 semaphore_t user_list_sema;           // protect the user list against bad things
+semaphore_t new_user_list_sema;       // protect the user list against bad things
+
 bool SwitchUser = false;              // return to switch to the next user
 
 // get the user list
@@ -37,21 +40,31 @@ user_context_t *get_user_current() {
     return CurrentUser;
 }
 
+uint32_t user_free_mem() {
+    struct mallinfo m = mallinfo();
+    uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
+    uint32_t free_sram = total_heap_size - m.uordblks;
+    return free_sram;
+}
+
 // Function to create a new user context
 user_context_t * create_user_context(struct tcp_pcb *server_pcb, struct tcp_pcb *client_pcb,bool system_user) {
-    user_context_t *user = (user_context_t *)malloc(sizeof(user_context_t));
+
+    if(user_free_mem() <= sizeof(user_context_t)+USER_MEMORY_SIZE) {
+        printf("User Create context, not enough memory to create context\n Have : %d, Needs %d\n",user_free_mem(),sizeof(user_context_t));
+        return NULL;
+    }
+
+    user_context_t *user = (user_context_t *)calloc(1,sizeof(user_context_t));
     if (!user) {
         return NULL;
     }
-    memset(user, 0, sizeof(user_context_t));
-  
         user->MemorySize = USER_MEMORY_SIZE;
-        user->i_Core = (aByte *)malloc(user->MemorySize);
+        user->i_Core = (aByte *)calloc(1,user->MemorySize);
         if (!user->i_Core) {
             free(user);
             return NULL;
         }
-        memset(user->i_Core, 0, user->MemorySize);
         user->i_Broken = false;                       // set to true to stop execution or listing
         user->i_inFile = NULL;                        // from option '-i' or user menu/button
         user->i_oFile = NULL; 
@@ -133,21 +146,39 @@ user_context_t * find_user_by_tcp_pcb(struct tcp_pcb *pcb) {
     return NULL;
 }
 
-bool add_user_to_list(user_context_t *new_user) {
-    sem_acquire_blocking(&user_list_sema);
-    user_context_t **head = &ActiveUsers;
-    if (!head || !new_user) {
-        sem_release(&user_list_sema);
+
+
+bool add_to_list(user_context_t *new_user, user_context_t **list, semaphore_t *sema,char * errmsg)  {  
+    if(!sem_try_acquire(sema)) {
+        printf("%s, Unable to aquire lock!\n");
         return false;
     }
+
+    user_context_t **head = list;
+
+    if (!head || !new_user) {
+        sem_release(sema);
+        return false;
+    }
+
     new_user->next = *head;
+
     if (*head) {
         (*head)->prev = new_user;
     }
     *head = new_user;
     new_user->prev = NULL;
-    sem_release(&user_list_sema);
+
+    sem_release(sema);
     return true;
+}
+
+bool add_user_to_waiting(user_context_t *new_user){
+    return add_to_list(new_user,&NewUsers,&new_user_list_sema,"Waiting Queue");
+}
+
+bool add_user_to_list(user_context_t *new_user) {
+    return add_to_list(new_user,&ActiveUsers,&user_list_sema,"User Queue");
 }
 
 int count_active_users() {
@@ -180,21 +211,32 @@ void user_print_info() {
 }   
 
 bool remove_user_from_list(user_context_t *user) {
-    sem_acquire_blocking(&user_list_sema);
-    user_context_t *users = ActiveUsers;
+    return remove_from_list(user,&ActiveUsers,&user_list_sema);
+}
+
+bool remove_user_from_waiting(user_context_t *user) {
+    return remove_from_list(user,&NewUsers,&new_user_list_sema);
+}
+
+bool remove_from_list(user_context_t *user, user_context_t **list, semaphore_t *sema) {
+    sem_acquire_blocking(sema);
+    user_context_t *users = *list;
+
     if (!users || !user) {
-        sem_release(&user_list_sema);
+        sem_release(sema);
         return false;
     }
+
     // Check if the user to be removed is the head of the list
     if(user == users) {
-        ActiveUsers = user->next;
-        if (ActiveUsers) {
-            ActiveUsers->prev = NULL;
+        *list = user->next;
+        if (*list) {
+            (*list)->prev = NULL;
         }
-        sem_release(&user_list_sema);
+        sem_release(sema);
         return true;
     }
+
     // Iterate through the list to find the user
     while (users) {
         if (users == user) {
@@ -204,12 +246,14 @@ bool remove_user_from_list(user_context_t *user) {
             if (users->next) {
                 users->next->prev = users->prev;
             }
-            sem_release(&user_list_sema);
+            sem_release(sema);
             return true;
         }
-        sem_release(&user_list_sema);
         users = users->next;
     }
+
+    sem_release(sema);
+    return false;
 }
 
 
@@ -235,6 +279,7 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
         user_context_t *existing_user = find_user_by_username(username);
         if (existing_user) {
             if(strncmp(existing_user->password, password, sizeof(existing_user->password)) == 0) {
+                tcp_server_send_message(user,"Someone is aleady logged in with that user username and password\n\r");
                 return false; // if password matches someone is already logged in with that username
             }
         }
@@ -246,7 +291,6 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
         user->logged_in = true;
         user->SystemUser = false;
         update_user_activity(user);
-        user->state.recv_len = 0;
         return user;
 
     } else {
@@ -255,7 +299,8 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
             user_context_t *existing_user = find_user_by_username(username);
             if (existing_user) {
                 if (strncmp(existing_user->password, password, sizeof(existing_user->password)) != 0){
-                 return false; // Invalid password and user combination
+                 tcp_server_send_message(user,"That user is logged in but passwords do not match\n\r");
+                 return (user_context_t *)false; // Invalid password and user combination
                 }
             }
             // for now if passwords  match just create a new session for that user, later we can improve this
@@ -263,8 +308,7 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
                 memcpy(&existing_user->state,&user->state,sizeof(TCP_SERVER_T));
                 existing_user->logged_in = true;
                 tcp_arg(existing_user->state.client_pcb, existing_user);
-                remove_user_from_list(user);
-                delete_user_context(user);
+                user->level = user_removed;
                 user = existing_user;
             } else {                       // if user is logged in then create a new context for this connection
                 user->SystemUser = false;
@@ -275,31 +319,35 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
                 user->password[sizeof(user->password) - 1] = '\0';
             }
 
-            printf("Start Basic Initilization\n");
-            if(!user->BasicInitComplete) UserInitTinyBasic(user,(char *)0);
-            printf("Complete Basic Initilization\n");
-            user->state.recv_len = 0;
+            if(!user->BasicInitComplete) {
+                 printf("Start Basic Initilization\n");
+                 UserInitTinyBasic(user,(char *)0);
+                 printf("Complete Basic Initilization\n");
+            }
+
+            tcp_server_send_message(user,"Welcome to Tiny Basic Time share system\n");
             update_user_activity(user);
             return user;
         }
-            
-    }   
-   // printf("Login failed due to bad format: '%s'\n", userinfo);
+    }
+
+    printf("Login failed due to bad format: '%s'\n", userinfo);
+    tcp_server_send_message(user,"Invalid login request format!\n");
     return (user_context_t *)false;  // probably a bad logon format
 }
 
 bool end_user_session(struct tcp_pcb *tpcb){
     user_context_t *user = find_user_by_tcp_pcb(tpcb);
     if (user) {
-        remove_user_from_list(user);
-        delete_user_context(user);
+        user->level = user_removed;
         return true;
     }
     return false;
 }
 
 bool user_logoff(user_context_t *user) {
-    tcp_close_client(user);
+    printf("user_logoff called :%s",user->username);
+    user->level = user_removed;
     return true;
 }
 
@@ -325,7 +373,7 @@ int putUserChar(user_context_t *user, int c) {
         char buff[2];
         buff[0] = (char)c;
         buff[1] = '\0';
-        tcp_server_send_data(user,buff);
+        tcp_server_send_message(user,buff);
         if(c=='\r') {
             tcp_output(state->client_pcb);
         }
@@ -338,7 +386,7 @@ void user_who(user_context_t *send_to) {
     char buffer[256];
 
     sprintf(buffer,"User Count : %d\n",count_active_users());
-    tcp_server_send_data(send_to,buffer);
+    tcp_server_send_message(send_to,buffer);
 
     while (user) {
         sprintf(buffer,"%-20s, Status : %-12s, Logged In : %3s, Last Activity : %llu\n\r",
@@ -346,7 +394,7 @@ void user_who(user_context_t *send_to) {
                         status_text[user->level], 
                         user->logged_in ? "Yes" : "No",
                         user->last_active_time );
-        tcp_server_send_data(send_to,buffer);
+        tcp_server_send_message(send_to,buffer);
         user = user->next;
     }
     return;
@@ -354,7 +402,7 @@ void user_who(user_context_t *send_to) {
 const char user_help_text[] = {"Commands:(case is ignored)\n\rWho - see who is logged on\n\rFree - See amount of available memory\n\rQuit - Terminate session\n\rBasic - Start Basic\r\n"};
 
 void user_help_print(user_context_t *send_to){
-    tcp_server_send_data(send_to,(char *)user_help_text);
+    tcp_server_send_message(send_to,(char *)user_help_text);
 }
 
 void user_free_space(user_context_t *send_to) {
@@ -362,8 +410,8 @@ void user_free_space(user_context_t *send_to) {
     struct mallinfo m = mallinfo();
     uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
     uint32_t free_sram = total_heap_size - m.uordblks;
-    sprintf(buffer,"Base Mem 512K, used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
-    tcp_server_send_data(send_to,buffer);
+    sprintf(buffer,"Base Mem 512K, System:%u, User:%u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
+    tcp_server_send_message(send_to,buffer);
 }
 
 void user_quit(user_context_t *user) {
@@ -372,9 +420,10 @@ void user_quit(user_context_t *user) {
 
 void userShell(user_context_t * user) {
     // later this will be a basic program
+    strupr(user->state.buffer_recv);
     DEBUG_printf("User Shell Request from %s id %8X %-7s : %s ",user->username,
                  user->SystemUser ? user->state.server_pcb:user->state.client_pcb,
-                 user->SystemUser ? "System": "User",strupr(user->state.buffer_recv));
+                 user->SystemUser ? "System": "User",user->state.buffer_recv);
 
     if(user->state.recv_len >= 3 && strncmp(user->state.buffer_recv,"WHO",3)==0){
         user_who(user);
@@ -386,13 +435,11 @@ void userShell(user_context_t * user) {
         user_quit(user);
     } else if(user->state.recv_len >= 3 && strncmp(user->state.buffer_recv,"BASIC",3)==0){
         user->level = user_basic;
-        user->state.recv_len = 0;
         return;
     } else {
-        tcp_server_send_data(user,"Unknown Command\n\r");
+        tcp_server_send_message(user,"Unknown Command\n\r");
     }
 
-   tcp_server_send_data(user," > ");
-   user->state.recv_len = 0;
+
 
 }

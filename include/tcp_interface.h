@@ -34,6 +34,7 @@ typedef void (*tcp_conn_cb_t)(bool connected);
 
 /* Initialize the TCP server subsystem. Must be called before other functions. */
 extern  user_context_t * tcp_server_init(void);
+
 extern  err_t tcp_server_close(void *arg);
 extern  err_t tcp_close_client(user_context_t *user );
 extern  err_t tcp_close_client_by_pcb(struct tcp_pcb *tpcb );
@@ -45,6 +46,7 @@ extern  err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb);
 extern  void tcp_server_err(void *arg, err_t err);
 extern  err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err);
 extern  bool tcp_server_open(void *arg);
+extern  err_t tcp_server_send_message(void * arg, char * msg);
 
 #ifdef __cplusplus
 }

@@ -487,8 +487,8 @@ void Interp(void) {
   int op, ix, here, chpt;                                    /* temps */
   Broken = false;          /* initialize this for possible later test */
   while (!SwitchUser) {
-    if(CurrentUser->WaitingRead==io_waiting || CurrentUser->WaitingRead==io_waiting) {
-       SwitchUser = true;    // if this is waiting for input info 
+    if(CurrentUser->WaitingRead==io_waiting || CurrentUser->WaitingWrite==io_waiting) {
+       SwitchUser = true;    // if this is waiting for input info or output to be sent 
        continue;
     }
     if (StopIt()) {

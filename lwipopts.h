@@ -5,6 +5,7 @@
 // Common settings used in most of the pico_w examples
 // (see https://www.nongnu.org/lwip/2_1_x/group__lwip__opts.html for details)
 
+#define PICO_CYW43_ARCH_THREADSAFE_BACKGROUND 1
 // allow override in some examples
 #ifndef NO_SYS
 #define NO_SYS                      1
@@ -24,9 +25,9 @@
 #define MEM_SIZE                    10000 // default 4000 to 10000 bg
 #endif
 #define MEMP_NUM_TCP_SEG            32
-#define MEMP_NUM_ARP_QUEUE          10
-#define MEMP_NUM_TCP_PCB            10
-#define PBUF_POOL_SIZE              24
+#define MEMP_NUM_ARP_QUEUE          15    // was 10 updated bg
+#define MEMP_NUM_TCP_PCB            15    // was 10 updated bg
+#define PBUF_POOL_SIZE              100   // was 24 updated BG
 #define LWIP_ARP                    1
 #define LWIP_ETHERNET               1
 #define LWIP_ICMP                   1

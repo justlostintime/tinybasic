@@ -2,7 +2,7 @@
 #define TCP_DATATYPES_H
 
 #define TCP_PORT 4242
-#define DEBUG_printf printf
+#define DEBUG_printf(fmt,...) (void)0
 #define BUF_SIZE 256
 #define TEST_ITERATIONS 10
 #define POLL_TIME_S 5
