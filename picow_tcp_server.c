@@ -209,13 +209,14 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
         if(err == 0) {
             err = ERR_OK;
             DEBUG_printf("Closing connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
-            tcp_close_client(user);
+            user->level=user_removed;
         } else {
             err = ERR_ABRT;
             DEBUG_printf("Aborting connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
-            tcp_close_client(user);
+            user->level=user_removed;
         }
-        return tcp_server_result(user, err, "tcp_server_recv: remote closed");
+
+        return err;   // tcp_server_result(user, err, "tcp_server_recv: remote closed");
     }
     // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
     // can use this method to cause an assertion in debug mode, if this method is called when

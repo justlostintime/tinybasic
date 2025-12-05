@@ -296,8 +296,8 @@ void LogIt(int valu) {          /* insert this valu into activity log */
 /************************ Utility functions... ************************/
 
 void WarmStart(user_context_t *user) {                 /* initialize existing program */
-  user->i_UserEnd = Peek2(EndUser);
-  user->i_SubStk = UserEnd;            /* empty subroutine, expression stacks */
+  user->i_UserEnd = user_Peek2(user,EndUser);
+  user->i_SubStk = UserEnd;                           /* empty subroutine, expression stacks */
   user_Poke2(user,GoStkTop,user->i_SubStk);
   user->i_ExpnTop = ExpnStk;
   user->i_Lino = 0;                                        /* not in any line */
@@ -457,7 +457,7 @@ void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL c
   user->i_ILend = ILfront+2;
   user_Poke2(user,ILfront,user->i_ILend);               /* initialize pointers as promised in TBEK */
   user_Poke2(user,ColdGo+1,user->i_ILend);
-  user->i_Core[ILend] = (aByte)BadOp;                   /* illegal op, in case nothing loaded */
+  user->i_Core[user->i_ILend] = (aByte)BadOp;           /* illegal op, in case nothing loaded */
   if (txt == NULL) return;
   while (*txt != '\0') {                                /* get the data.. */
     while (*txt > '\r') txt++;                          /* (no code on 1st line) */
@@ -908,35 +908,78 @@ void Interp(void) {
 /* number. After completing the insertion, the IL program is          */
 /* restarted in the command mode.                                     */
       case 42:
+
         Lino = PopExInt();                              /* get line # */
         if (Lino <= 0) {          /* don't insert line #0 or negative */
           if (ILPC != 0) TBerror();
             else return;
-          break;}
-        while (((char)Core[BP]) == ' ') BP++;  /* skip leading spaces */
+          break;
+        }
+
+        while (((char)Core[BP]) == ' ' || ((char)Core[BP]) == '\t') BP++;  /* skip leading spaces */
+        
+
         if (((char)Core[BP]) == '\r') ix = 0;       /* nothing to add */
           else ix = InLend-BP+2;         /* the size of the insertion */
+
+        //printf("BP=%d, InLend=%d, inssert len(ix)=%d",BP,InLend,ix);
+        //ShoMemDump(BP,100);
+
         op = 0;         /* this will be the number of bytes to delete */
-        chpt = FindLine(Lino);             /* try to find this line.. */
-        if (Peek2(chpt) == Lino)       /* there is a line to delete.. */
-          op = (SkipTo(chpt+2, '\r')-chpt);
+
+        chpt = FindLine(Lino);              /* try to find this line..  or return the next higher line*/
+
+        if (Peek2(chpt) == Lino)            /* there is a line to delete.. */
+          op = (SkipTo(chpt+2, '\r')-chpt); // find the end of line, \r is used as delimiter
+
+        //printf("Line to delete(op) %d",op);
+
         if (ix == 0) if (op==0) {  /* nothing to add nor delete; done */
+          //printf("Nothing to add or delete\n");
           Lino = 0;
-          break;}
+          break;
+        }
+
         op = ix-op;      /* = how many more bytes to add or (-)delete */
+        //printf(",Add or delete(op) %d\n",op);
+
         if (SrcEnd+op>=SubStk) {                         /* too big.. */
           TBerror();
-          break;}
+          break;
+        }
+        //printf("SrcEnd=%d, SrcEnd+op=%d, chpt=%d, ix=%d, chpt+ix=%d\n",SrcEnd,SrcEnd+op,chpt, ix,chpt+ix);
         SrcEnd = SrcEnd+op;                               /* new size */
-        if (op>0) for (here=SrcEnd; (here--)>chpt+ix; )
-          Core[here] = Core[here-op];  /* shift backend over to right */
-        else if (op<0) for (here=chpt+ix; here<SrcEnd; here++)
-          Core[here] = Core[here-op];   /* shift it left to close gap */
+
+        //if (op == 0) {
+        //  printf("No shift");
+        // ShoMemDump(Peek2(UserProg),200);
+        //}
+
+        if (op>0) {
+        //  printf("shift right before\n");ShoMemDump(Peek2(UserProg),200);
+          for (here=SrcEnd; (here--)>chpt+ix; ) 
+            Core[here] = Core[here-op];  /* shift backend over to right */
+         // printf("Shift right after\n"); ShoMemDump(Peek2(UserProg),200);
+        }
+
+        else if (op<0)  {
+        //  printf("Shift left before\n"); ShoMemDump(Peek2(UserProg),200);
+          for (here=chpt+ix; here<SrcEnd; here++) 
+            Core[here] = Core[here-op];   /* shift it left to close gap */
+        //  printf("Shift left after\n"); ShoMemDump(Peek2(UserProg),200);
+        }
+
         if (ix>0) Poke2(chpt++,Lino);        /* insert the new line # */
+        int start = chpt;
         while (ix>2) {                       /* insert the new line.. */
           Core[++chpt] = Core[BP++];
-          ix--;}
+          ix--;
+        }
+       // printf("After New line added\n");
+       // ShoMemDump(Peek2(UserProg),200);
+
         Poke2(EndProg,SrcEnd);
+
         ILPC = 0;
         Lino = 0;
           if (Debugging>0) ListIt(0,0);
@@ -1527,7 +1570,6 @@ void UserInitTinyBasic(user_context_t *user, char * ILtext) {
   ConvtIL(user,ILtext);                                       // convert IL assembly code to binary
   ColdStart(user);                                            // go do it
   user->BasicInitComplete = true;                             // indicate it was already done
-
 }
 
 void RunTinyBasic() {

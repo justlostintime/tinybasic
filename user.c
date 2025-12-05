@@ -319,12 +319,6 @@ user_context_t *login_user(user_context_t *user, char *userinfo) {
                 user->password[sizeof(user->password) - 1] = '\0';
             }
 
-            if(!user->BasicInitComplete) {
-                 printf("Start Basic Initilization\n");
-                 UserInitTinyBasic(user,(char *)0);
-                 printf("Complete Basic Initilization\n");
-            }
-
             tcp_server_send_message(user,"Welcome to Tiny Basic Time share system\n");
             update_user_activity(user);
             return user;

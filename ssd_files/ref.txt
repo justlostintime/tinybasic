@@ -10,6 +10,7 @@ key words
     clear
     run 
     rem
+    usr()  call subrutine
 
 functions
     rnd
@@ -24,4 +25,16 @@ operators
     <>
     ><
 
+usr supported calls
+usr(255)                        watch point set watch point
+usr(256)                        cold start, rest and cold start
+usr(259)                        warm start, start running at last break
+usr(262)                        call the input character sub 
+usr(265)                        call the output charater subrutine
+usr(268)                        break execution
+usr(273,start,end)              dump core memory in hex
+usr(276),address)               get byte from core at address
+usr(277),address)               get a word value from core memory  
+usr(280,address,value)          poke a byte into core memory
+usr(283)                        print trace logged
 

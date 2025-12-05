@@ -16,6 +16,8 @@
 #include "sd_card.h"
 #include "user.h"
 
+#define multicore_basic 1
+
 extern char __StackLimit, __bss_end__;
 
 //extern void StartTinyBasic(char * ILtext);
@@ -50,16 +52,99 @@ void pico_set_led(bool led_on) {
 // core 1 main task
 void core1_entry() {
     printf("Begin using core 1\n");
-    sleep_ms(5000);
     while(true) {
-        user_context_t *user = get_user_list();
-        if(user->logged_in) {
-            if (user->level == user_basic) {
-                CurrentUser = user;
-                RunTinyBasic();
+
+    user_context_t *user;
+    sem_acquire_blocking(&new_user_list_sema);
+        if(NewUsers){
+            user = NewUsers;
+            NewUsers = 0;
+            sem_release(&new_user_list_sema);
+            printf("Transfering user from waiting to active:");
+            while(user) {
+                               user_context_t *next_user = user->next;
+                user->next = NULL;
+                add_user_to_list(user);
+                printf("uid(%8X),",user->state.client_pcb);
+                user = next_user;
             }
+            printf(" : Transfer Complete\n");
+        } else {
+            sem_release(&new_user_list_sema);
         }
-    user = user->next;
+
+        user = get_user_list();
+
+        while(user){
+
+            switch(user->level) {
+                case user_new_connect:
+                    if(user->state.client_pcb) {
+                        tcp_server_send_message(user,(char *)Greeting);
+                        user->level++; // bump to wait login
+                    }
+                    break;
+
+                case user_wait_loggin:
+                    user_context_t *new_user;
+                    if(user->state.recv_len) { // we have something to proceess
+                        new_user = login_user(user,user->state.buffer_recv);
+                        if(new_user)  {
+                            user = new_user;
+                            user->level++;            // bump to shell available
+                            tcp_server_send_message(user,(char *)UserPrompt);
+                        } else {
+                            tcp_server_send_message(user,(char *)UserLogin);
+                        }
+
+                    }
+                    user->state.recv_len = 0;
+                    break;
+
+                case user_shell:
+                    if(user->state.recv_len > 0) {
+                        userShell(user);
+                        if (user->level == user_shell)tcp_server_send_message(user,(char *)UserPrompt);
+                        user->state.recv_len = 0;
+                    }
+                    break;
+
+                case user_basic:
+                    if(user->pending_console_read) {
+                            char value = user->linebuffer[user->lineIndex];
+                            if(user->SystemUser) {
+                                putchar(value);
+                                if(value == '\r') putchar('\n');
+                            }
+                            if(value == '\r') {
+                                user->WaitingRead = io_complete;
+                            } else {
+                                user->WaitingRead = io_waiting;
+                            }
+                            user->pending_console_read--;
+                    } 
+                    CurrentUser = user;
+                    if(!user->BasicInitComplete) {
+                        //printf("Start Basic Initilization\n");
+                        UserInitTinyBasic(user,(char *)0);
+                        //printf("Complete Basic Initilization\n");
+                    }
+                    RunTinyBasic();
+                    break;
+
+                case user_removed:    // when a user is to be removed and the connection closed
+                    tcp_close_client(user);
+                    remove_user_from_list(user);
+                    delete_user_context(user);
+                    printf(",user removed from system\n");
+                    user = get_user_list();
+                    continue;
+
+                default:
+                   printf("Unknown User state %d",user->level);
+            }
+            user = user->next;
+        }
     }
 }
 
@@ -150,9 +235,14 @@ int main()
     UserInitTinyBasic(DebugUser,(char *)0);    // init tiny basic for DebugUser user
 
  
-   // multicore_launch_core1(core1_entry);
+   
 
-    
+#ifdef multicore_basic
+        multicore_launch_core1(core1_entry);
+        while(true){
+            sleep_ms(100);
+        }
+#else
     while (true) {
         user_context_t *user;
         sem_acquire_blocking(&new_user_list_sema);
@@ -224,6 +314,11 @@ int main()
                             user->pending_console_read--;
                     } 
                     CurrentUser = user;
+                    if(!user->BasicInitComplete) {
+                        //printf("Start Basic Initilization\n");
+                        UserInitTinyBasic(user,(char *)0);
+                        //printf("Complete Basic Initilization\n");
+                    }
                     RunTinyBasic();
                     break;
 
@@ -241,4 +336,5 @@ int main()
             user = user->next;
         }  
     }
+#endif
 }
