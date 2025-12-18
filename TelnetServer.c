@@ -14,24 +14,25 @@
 #include "sd_card.h"
 #include "user.h"
 
-int init_telnet_server(void)
+int init_telnet_server(char *ssid, char *password)
 {
 // Initialise the Wi-Fi chip
     if (cyw43_arch_init()) {
         printf("Wi-Fi init failed\n");
         return -1;
         }
-    printf("Wi-Fi init succeeded\n");
+    //printf("Wi-Fi init succeeded\n");
 
     // Enable wifi station
     cyw43_arch_enable_sta_mode();
 
-    printf("Connecting to Wi-Fi...\n");
-    if (cyw43_arch_wifi_connect_timeout_ms("Q!Waste:Slow", "MON:Cars#", CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+    //printf("Connecting to Wi-Fi...'%s','%s'\n",ssid,password);
+
+    if (cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n");
         return -1;
     } else {
-        printf("Connected.\n");
+    //    printf("Connected.\n");
         // Read the ip address in a human readable way
         uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
         printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
@@ -41,15 +42,16 @@ int init_telnet_server(void)
     user_context_t *user = tcp_server_init();
     if (!user) {
         printf("root TCP init failed\n");
-    } else {
-        printf("Starting root TCP server\n");
+    // } else {
+    //    printf("Starting root TCP server\n");
+    return 1;
     }
 
     if (!tcp_server_open(user)) {
         printf("root TCP server open failed\n");
-        tcp_server_result(user, -1,"init_telnet_server : open failed");
-    } else {
-        printf("root TCP server open succeeded\n");
+    //   tcp_server_result(user, -1,"init_telnet_server : open failed");
+    //} else {
+    //    printf("root TCP server open succeeded\n");
     }
     return 0;
 }

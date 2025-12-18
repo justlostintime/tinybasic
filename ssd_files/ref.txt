@@ -37,4 +37,5 @@ usr(276),address)               get byte from core at address
 usr(277),address)               get a word value from core memory  
 usr(280,address,value)          poke a byte into core memory
 usr(283)                        print trace logged
+usr(269)                        exit the basic interpreter
 

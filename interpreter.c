@@ -5,22 +5,22 @@
 #include "pico/stdlib.h"  /* added 08 Oct 31 */
 #include "user.h"
 #include "tcp_interface.h"
+#include "FileSystem.h"
 
 extern  user_context_t *ActiveUsers;      // Head of linked list of active users
 extern  user_context_t *CurrentUser;      // Pointer to current user for processing
 extern  user_context_t *RootUser;         // Pointer to the root user
 extern  user_context_t *DebugUser;        // Pointer to the debug user
-extern  int putUserChar(user_context_t *user, int c);
-extern  bool SwitchUser;                   // set when this users time slot is finished
+extern  bool SwitchUser;                  // set when this users time slot is finished
 
 /* Default input/output file names, if defined (omit otherwise)... */
 #define DefaultInputFile  "TBasm.txt"
 #define DefaultOutputFile "TBout.txt"
 
 /* File input/output function macros (adjust for C++ framework) */
-#define IoFileClose(fi)    fclose(fi)
+#define IoFileClose(fi)    f_close(fi)
 #define InFileChar(fi)     CfileRead(fi)
-#define OutFileChar(fi,ch) fputc(ch,fi)
+#define OutFileChar(fi,ch) f_putc(ch,fi)
 #define ScreenChar(ch)     putUserChar(CurrentUser,ch)
 #define KeyInChar          (char)getUserChar(CurrentUser)
 #define NeedsEcho          false
@@ -32,10 +32,18 @@ extern  bool SwitchUser;                   // set when this users time slot is f
 /* #define InFileChar(fi)     (fi->atEnd()?'\0':fi->getch()) */
 /* #define OutFileChar(fi,ch) fi->putch(ch) */
 
-char CfileRead(FileType fi) {   /* C file reader, returns '\0' on eof */
-  int chn = fgetc(fi);
-  if (chn == EOF) return '\0';
-  return (char)chn;
+char CfileRead(FIL* fi) {   /* C file reader, returns '\0' on eof */
+  char read_buffer[10];;
+  uint  bytes_to_read = 1;
+  uint  bytes_read;
+  FRESULT fr;
+  fr = f_read(CurrentUser->i_inFile, read_buffer,bytes_to_read, &bytes_read);
+  if (FR_OK != fr) {
+    printf("CfileRead f_read error: %s (%d)\n", FRESULT_str(fr), fr);
+    return '\0';
+  }
+  char chn = (bytes_read != 0) ? read_buffer[0] : 0;
+  return chn;
 } /* ~CfileRead */
 
 /* Constants: */
@@ -57,6 +65,7 @@ char CfileRead(FileType fi) {   /* C file reader, returns '\0' on eof */
 #define InchSub 262   /* Core address of nominal char input USR */
 #define OutchSub 265  /* Core address of nominal char output USR */
 #define BreakSub 268  /* Core address of nominal break test USR */
+#define ExitBasic 269 /* Core address of exit BASIC USR */
 #define DumpSub 273   /* Core address of debug core dump USR */
 #define PeekSub 276   /* Core address of nominal byte peek USR */
 #define Peek2Sub 277  /* Core address of nominal 2-byte peek USR */
@@ -127,7 +136,7 @@ int user_Peek2(user_context_t *user, int loc) {                          /* fetc
   return ((int)user->i_Core[loc])*256 + ((int)user->i_Core[loc+1]);
 } /* ~Peek2 */
 
-/************************** I/O Utilities... **************************/
+//************************** I/O Utilities... **************************
 
 void Ouch(char ch) {                         /* output char to stdout */
   if (oFile != NULL) {                       /* there is an output file.. */
@@ -135,14 +144,14 @@ void Ouch(char ch) {                         /* output char to stdout */
     else if (ch == '\r') OutFileChar(oFile,'\n');
   }
   if (ch=='\r') {
-    Core[TabHere] = 0;                       /* keep count of how long this line is */
+    Core[TabHere] = 0;                    /* keep count of how long this line is */
     ScreenChar('\n');
     ScreenChar('\r');}
   else if (ch>=' ') if (ch<='~') {           /* ignore non-print control chars */
     Core[TabHere]++;
     ScreenChar(ch);
   }
-}                        /* ~Ouch */
+} // ~Ouch
 
 char Inch(void) {                            /* read input character from stdin or file */
   char ch;
@@ -151,7 +160,15 @@ char Inch(void) {                            /* read input character from stdin 
     if (ch == '\n') ch = '\r';
     if (ch == '\0') {                        /* switch over to console input at eof */
       IoFileClose(inFile);
-      inFile = NULL;}
+      free(inFile);
+      inFile = NULL;
+      user_write(CurrentUser,"\n\r");       /* notify user of eof on file */
+      if(CurrentUser->ExitWhenDone) {
+        CurrentUser->ExitWhenDone = false;
+        CurrentUser->level=user_shell;
+        SwitchUser = true;
+      }
+    }
     else {
       Ouch(ch);                              /* echo input to screen (but not output file) */
       return ch;
@@ -290,7 +307,7 @@ void ShowLog(void) {            /* display activity log for debugging */
   OutStr("*****");
   OutLn();} /* ~ShowLog */
 
-void LogIt(int valu) {          /* insert this valu into activity log */
+void LogIt(int valu) {          /* insert this value into activity log */
   DebugLog[(LogHere++)&(LOGSIZE-1)] = valu;}
 
 /************************ Utility functions... ************************/
@@ -480,17 +497,31 @@ void LineSwap(int here) {   /* swap SvPt/BP if here is not in InLine  */
     BP = here;}
   else SvPt = BP;} /* ~LineSwap */
 
-/************************** Main Interpreter **************************/
+void DoExitBasic(user_context_t *user) {      /* exit Tiny Basic interpreter */
+  user->level = user_shell;
+  //user_complete_read_from_input_buffer(user);
+  user->WaitingWrite = io_none;
+  WarmStart(user);
+  SwitchUser = true;
+} /* ~ExitBasic */
 
-void Interp(void) {
+//************************** Main Interpreter **************************
+
+void Interp(user_context_t *user) {
   char ch;    /* comments from TinyBasic Experimenter's Kit, pp.15-21 */
   int op, ix, here, chpt;                                    /* temps */
   Broken = false;          /* initialize this for possible later test */
+  //static bool writeit = true;
+  CurrentUser = user;
   while (!SwitchUser) {
     if(CurrentUser->WaitingRead==io_waiting || CurrentUser->WaitingWrite==io_waiting) {
+      // if(writeit) {printf("read %d, write %d",CurrentUser->WaitingRead, CurrentUser->WaitingWrite); writeit=false;}
        SwitchUser = true;    // if this is waiting for input info or output to be sent 
        continue;
     }
+
+    //writeit=true;
+
     if (StopIt()) {
       Broken = false;
       OutLn();
@@ -518,14 +549,7 @@ void Interp(void) {
       }
     }
     op = (int)Core[ILPC++];
-    if(op == 39) {        // if we need input we have to do it in an async manner
-      if (CurrentUser->WaitingRead != io_complete) {
-          CurrentUser->WaitingRead = io_waiting;
-          SwitchUser = true;
-          ILPC--;
-          continue;
-      }
-    }
+    
     if (Debugging>0) {
         OutLn(); OutStr("[IL+");
         OutHex(ILPC-Peek2(ILfront)-1,3);
@@ -845,6 +869,7 @@ void Interp(void) {
 /*                         The ASCII string follows opcode and its    */
 /* last byte has the most significant bit set to one.                 */
       case 36:
+        //printf("Print a string\n\r");
         do {
           ix = (int)Core[ILPC++];
           Ouch((char)(ix&127));          /* strip high bit for output */
@@ -861,6 +886,13 @@ void Interp(void) {
 /* character in the input line buffer, and a carriage-return-linefeed */
 /* sequence is [not] output.                                          */
       case 39:
+        if(CurrentUser->i_inFile == NULL && !user_line_available(CurrentUser)) {  // if there is not a complete line to read wait for one
+          CurrentUser->WaitingRead = io_waiting;
+          ILPC--;
+          SwitchUser = true;
+          continue;
+        }
+
         InLend = InLine;
         while (true) {               /* read input line characters... */
           ch = Inch();
@@ -882,6 +914,7 @@ void Interp(void) {
           if (InLend>ExpnTop-2) continue;    /* discard overrun chars */
           Core[InLend++] = (aByte)ch;
         }  /* insert this char in buffer */
+
         while (InLend>InLine && Core[InLend-1] == ' ')
           InLend--;                     /* delete excess trailing spaces */
         Core[InLend++] = (aByte) '\r';  /* insert final return & null */
@@ -1020,7 +1053,13 @@ void Interp(void) {
 /* jumps to the Warm Start entry of the ML interpreter.               */
       case 45:
         WarmStart(CurrentUser);
-          if (Debugging>0) ShowSubs();
+        if(CurrentUser->ExitWhenDone) {
+          CurrentUser->level = user_shell;
+          CurrentUser->ExitWhenDone = false;
+          SwitchUser = true;
+          continue;
+        }
+        if (Debugging>0) ShowSubs();
         break;
 
 /* US      2E      Machine Language Subroutine Call.                  */
@@ -1040,7 +1079,8 @@ void Interp(void) {
         ix = PopExInt()&0xFFFF;                            /* datum A */
         here = PopExInt()&0xFFFF;                          /* datum X */
         op = PopExInt()&0xFFFF;            /* nominal machine address */
-        if (ILPC == 0) break;
+        if (ILPC == 0) break;              /* in immediate mode/command mode*/
+
         if (op>=Peek2(ILfront) && op<ILend) { /* call IL subroutine.. */
           PushExInt(here);
           PushExInt(ix);
@@ -1064,6 +1104,11 @@ void Interp(void) {
           WarmStart(CurrentUser);
           break;
         case InchSub:
+          if(!user_char_available(CurrentUser)) { // we have to suspend it if no input available
+            ILPC--;                  // backup the execution to repeat this call
+            SwitchUser = true;       // tell the interpreter to wait till io is available
+            continue;                // this should force a suspend of the execution
+          }
           PushExInt((int)Inch());
           break;
         case OutchSub:
@@ -1097,6 +1142,10 @@ void Interp(void) {
           ShowLog();
           PushExInt(LogHere);
           break;
+        case ExitBasic:
+           DoExitBasic(CurrentUser);
+           continue;
+  
         default: TBerror();}
         break;
 
@@ -1562,9 +1611,15 @@ void StartTinyBasic(char* ILtext) {
 void UserInitTinyBasic(user_context_t *user, char * ILtext) {
   int nx;
 
-  for (nx=0; nx<CoreTop; nx++) user->i_Core[nx] = 0;          // clear Core..
+  if(user->BasicInitComplete) return;                       // already done
+  user->i_Core = (aByte *)calloc(1,user->MemorySize); // allocate memory for interpreter core
+  if (!user->i_Core) {
+      user_write(user, "TinyBasic: Unable to allocate memory for interpreter core.\n");
+      return;
+  }
+  //for (nx=0; nx<CoreTop; nx++) user->i_Core[nx] = 0;        // clear Core.. not required as calloc does it
   user_Poke2(user,ExpnStk,8191);                              // random number seed
-  user->i_Core[BScode] = 8;                                   // backspace
+  user->i_Core[BScode] = 0x7f;                                // backspace
   user->i_Core[CanCode] = 27;                                 // escape
   if (ILtext == NULL) ILtext = DefaultIL();                   // no IL given, use mine
   ConvtIL(user,ILtext);                                       // convert IL assembly code to binary
@@ -1572,10 +1627,11 @@ void UserInitTinyBasic(user_context_t *user, char * ILtext) {
   user->BasicInitComplete = true;                             // indicate it was already done
 }
 
-void RunTinyBasic() {
-   Interp();                                                  // go do it
+void RunTinyBasic(user_context_t * user) {
+   Interp(user);                                                  // go do it
    SwitchUser = false;
 }
+
 
 /* int TinyBasicInterface(int argc, char* argv[]) {
   int nx;

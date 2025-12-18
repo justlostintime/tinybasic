@@ -1,0 +1,65 @@
+0     Break during execution
+8     Memory overflow; line not inserted
+9     Line number 0 not allowed
+13    RUN with no program in memory
+18    LET is missing a variable name
+20    LET is missing an =
+23    Improper syntax in LET
+25    LET is not followed by END
+34    Improper syntax in GOTO
+37    No line to GO TO
+39    Misspelled GOTO
+40,41 Misspelled GOSUB
+46    GOSUB subroutine does not exist
+59    PRINT not followed by END
+62    Missing close quote in PRINT string
+73    Colon in PRINT is not at end of statement
+75    PRINT not followed by END
+95    IF not followed by END
+104   INPUT syntax bad - expects variable name
+123   INPUT syntax bad - expects comma
+124   INPUT not followed by END
+132   RETURN syntax bad
+133   RETURN has no matching GOSUB
+134   GOSUB not followed by END
+139   END syntax bad
+154   Can't LIST line number 0
+164   LIST syntax error - expects comma
+183   REM not followed by END
+184   Missing statement type keyword
+186   Misspelled statement type keyword
+188   Memory overflow: too many GOSUB's ...
+211      ... or expression too complex
+224   Divide by 0
+226   Memory overflow
+232   Expression too complex ...
+233      ... using RND ...
+234      ... in direct evaluation;
+253      ... simplify the expression
+259   RND (0) not allowed
+266   Expression too complex ...
+267      ... for RND
+275   USR expects "(" before arguments
+284   USR expects ")" after arguments
+287   Expression too complex ...
+288      ... for USR
+290   Expression too complex
+293   Syntax error in expression - expects value
+296   Syntax error - expects ")"
+298   Memory overflow (in USR)
+303   Expression too complex (in USR)
+
+
+                                  14
+
+304   Memory overflow (in function evaluation)
+306   Syntax error - expects "(" for function arguments
+330   IF syntax error - expects relation operator
+
+      Other error message numbers may possibly occur if the
+interpreter is malfunctioning.  If this happens, check the program in
+memory, or reload it, and try again.
+
+      Error number 184 may also occur if TINY BASIC is incorrectly
+interfaced to the keyboard input routines.  A memory dump of the
+input line buffer may disclose this kind of irregularity.

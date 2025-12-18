@@ -1,0 +1,10 @@
+10 rem test program for tiny basic
+15 b=0
+20 a=0
+30 if a > 10000 goto 1000
+40 a=a+1
+50 goto 30
+1000 b=b+1
+1010 if b < 100 goto 20
+1020 print "finished"
+1030 end

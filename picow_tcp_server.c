@@ -20,6 +20,8 @@
 extern char __StackLimit, __bss_end__;
 extern struct tcp_pcb *tcp_active_pcbs;
 
+#define Initial_Root_State  user_shell
+
 user_context_t * tcp_server_init(void) {
     user_context_t *user  =  create_user_context(NULL, NULL,true);
     if (!user) {
@@ -120,7 +122,7 @@ err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
 
 // used to send a message to a client when at the level no state or user assigned
 err_t tcp_server_sent_no_user(void *arg, struct tcp_pcb *tpcb, u16_t len) {
-   printf("tcb direct error message sent %d bytes",len);
+   //printf("tcb direct error message sent %d bytes",len);
    tcp_close(tpcb);
 }
 
@@ -237,19 +239,15 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     DEBUG_printf("Received data from %s port %d id %8X len %d: %s\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port, 
                 tpcb, state->recv_len, (char *)&state->buffer_recv);
 
-    if(user->level == user_basic) {
-        if (state->buffer_recv[ state->recv_len-1] == '\n') state->recv_len--;
-        memcpy(&user->linebuffer,&state->buffer_recv,state->recv_len);
-        user->lineLength = state->recv_len;
-        user->lineIndex = state->recv_len-1;
-        user->lineReadPos = 0;
-        user->WaitingRead = io_waiting;
-        user->pending_console_read=1;
-        user->linebuffer[user->lineLength] = '\0';
-        DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
-        state->recv_len = 0;
+    if (state->buffer_recv[ state->recv_len-1] == '\n') state->recv_len--;
+
+    // everything now goes through the add character to console buffer
+    for(int i = 0; i < state->recv_len; i++) {
+            user_add_char_to_input_buffer(user,state->buffer_recv[i]);
     }
 
+    DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
+    state->recv_len = 0;
     return ERR_OK;
 }
 
@@ -310,6 +308,7 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     DEBUG_printf(("Connection counter %d\n"), tcp_connection_count());
     // user_print_info();
     tcp_server_send_data(new_user,"Welcome to Pico timeshare\n\r");
+    // cyw43_arch_lwip_end();
 }
 
 bool tcp_server_open(void *arg) {
@@ -340,7 +339,7 @@ bool tcp_server_open(void *arg) {
 
     strncpy(user->username,"root",sizeof(user->username)-1);
     user->logged_in = true;
-    user->level = user_basic;
+    user->level = Initial_Root_State;
     
     if(add_user_to_waiting(user)) {
         DEBUG_printf("Root context added to active list id = %8X\n",state->server_pcb );
