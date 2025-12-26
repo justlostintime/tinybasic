@@ -35,18 +35,20 @@ typedef void (*tcp_conn_cb_t)(bool connected);
 /* Initialize the TCP server subsystem. Must be called before other functions. */
 extern  user_context_t * tcp_server_init(void);
 
-extern  err_t tcp_server_close(void *arg);
-extern  err_t tcp_close_client(user_context_t *user );
-extern  err_t tcp_close_client_by_pcb(struct tcp_pcb *tpcb );
-extern  err_t tcp_server_result(void *arg, int status, char * msg);
-extern  err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
-extern  err_t tcp_server_send_data(void *arg, char * msg);
-extern  err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p);
-extern  err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb);
-extern  void tcp_server_err(void *arg, err_t err);
-extern  err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err);
-extern  bool tcp_server_open(void *arg);
-extern  err_t tcp_server_send_message(void * arg, char * msg);
+err_t tcp_server_close(void *arg);
+err_t tcp_close_client(user_context_t *user );
+err_t tcp_close_client_by_pcb(struct tcp_pcb *tpcb );
+// extern  err_t tcp_server_result(void *arg, int status, char * msg);
+err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
+err_t tcp_server_send_data(void *arg, char * msg, int length);
+err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p);
+err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb);
+void tcp_server_err(void *arg, err_t err);
+err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err);
+bool tcp_server_open(void *arg);
+err_t tcp_server_send_message(void * arg, char * msg);
+err_t tcp_server_send_msg_len(void * arg, char * msg, int len);
+err_t tcp_server_flush(void * arg);
 
 #ifdef __cplusplus
 }

@@ -64,18 +64,18 @@ void init_filesys(void) {
     read_buffer = malloc(bytes_to_read + 1);
 
     if (read_buffer == NULL) {
-        printf("Failed to allocate memory for reading test file\n");  
+        printf("Failed to allocate memory for reading test file\n\r");  
     }
     fr = f_read(&fil, read_buffer,bytes_to_read-1, &bytes_read);
     if (FR_OK != fr) {
-        printf("f_read on test file error: %s (%d)\n", FRESULT_str(fr), fr);
+        printf("f_read on test file error: %s (%d)\n\r", FRESULT_str(fr), fr);
     }
     read_buffer[bytes_read] = '\0'; // Ensure null termination
     //printf("Read from file bytes:%d, Data: %s\n\r", bytes_read,read_buffer);
     free(read_buffer);
     fr = f_close(&fil);
     if (FR_OK != fr) {
-        printf("f_close error: %s (%d)\n", FRESULT_str(fr), fr);
+        printf("f_close error: %s (%d)\n\r", FRESULT_str(fr), fr);
     }
     // printf("File system operations complete. Unmounting SD card.........................\n");
     // f_unmount(pSD->pcName);
@@ -85,7 +85,7 @@ int close_filesys(void) {
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_unmount(pSD->pcName); // Unmount the filesystem
     if (FR_OK != fr) {
-        printf("f_unmount(NULL) error: %s (%d)\n", FRESULT_str(fr), fr);
+        printf("f_unmount(NULL) error: %s (%d)\n\r", FRESULT_str(fr), fr);
         return -1;
     }
     return 0;
@@ -112,7 +112,7 @@ bool user_create_home_directory(user_context_t *user) {
     if (res == FR_OK || res == FR_EXIST) {
         return true;
     } else {
-        snprintf(buffer,sizeof(buffer),"Failed to create directory \"%s\". (%u)\n", path, res);
+        snprintf(buffer,sizeof(buffer),"Failed to create directory \"%s\". (%u)\n\r", path, res);
         user_write(user,buffer);
         return false;
     }
@@ -131,11 +131,11 @@ FRESULT user_create_directory(user_context_t *user, char *dirname) {
 
     FRESULT res = f_mkdir(path);
     if (res == FR_OK || res == FR_EXIST) {
-        snprintf(buffer,sizeof(buffer),"Create directory \"%s\" for %s in \"%s\". (%u)\n",dirname,user->username, path, res);
+        snprintf(buffer,sizeof(buffer),"Create directory \"%s\" for %s in \"%s\". (%u)\n\r",dirname,user->username, path, res);
         user_write(user,buffer);
         return FR_OK;
     } else {
-        snprintf(buffer,sizeof(buffer),"Failed to create directory\"%s\" in \"%s\". (%u)\n",dirname, path, res);
+        snprintf(buffer,sizeof(buffer),"Failed to create directory\"%s\" in \"%s\". (%u)\n\r",dirname, path, res);
         user_write(user,buffer);
         return res;
     }
@@ -155,19 +155,19 @@ FRESULT user_remove_directory(user_context_t *user, char *dirname) {
 
     FRESULT res = f_unlink(path);
     if (res == FR_OK) {
-        snprintf(buffer,sizeof(buffer),"Removed  \"%s\" for %s in \"%s\". (%u)\n",dirname,user->username, path, res);
+        snprintf(buffer,sizeof(buffer),"Removed  \"%s\" for %s in \"%s\". (%u)\n\r",dirname,user->username, path, res);
         user_write(user,buffer);
         return FR_OK;
     } else if(res == FR_DENIED) {
-            snprintf(buffer,sizeof(buffer),"Directory \"%s\" not empty for %s in \"%s\". (%u)\n",dirname,user->username, path, res);
+            snprintf(buffer,sizeof(buffer),"Directory \"%s\" not empty for %s in \"%s\". (%u)\n\r",dirname,user->username, path, res);
             user_write(user,buffer);
             return res;
     } else if(res == FR_NO_FILE) {
-            snprintf(buffer,sizeof(buffer),"File \"%s\" does not exist for %s in \"%s\". (%u)\n",dirname,user->username, path, res);
+            snprintf(buffer,sizeof(buffer),"File \"%s\" does not exist for %s in \"%s\". (%u)\n\r",dirname,user->username, path, res);
             user_write(user,buffer);
             return res;
     } else {
-        snprintf(buffer,sizeof(buffer),"Unable to delete \"%s\" in \"%s\". (%u)\n",dirname, path, res);
+        snprintf(buffer,sizeof(buffer),"Unable to delete \"%s\" in \"%s\". (%u)\n\r",dirname, path, res);
         user_write(user,buffer);
         return res;
     }
@@ -191,17 +191,17 @@ FRESULT user_rename_user_file(user_context_t *user, char *sourcefile, char *dest
 
     FRESULT res = f_rename(sourcepath,destpath);
     if (res == FR_OK) {
-        snprintf(buffer,sizeof(buffer),"Renamed file \"%s\" to \"%s\" for %s. (%u)\n",sourcefile,destfile,user->username, res);
+        snprintf(buffer,sizeof(buffer),"Renamed file \"%s\" to \"%s\" for %s. (%u)\n\r",sourcefile,destfile,user->username, res);
         user_write(user,buffer);
         return FR_OK;
     } else {
-        snprintf(buffer,sizeof(buffer),"Failed to rename file \"%s\" to \"%s\" for %s. (%u)\n",sourcefile,destfile,user->username, res);
+        snprintf(buffer,sizeof(buffer),"Failed to rename file \"%s\" to \"%s\" for %s. (%u)\n\r",sourcefile,destfile,user->username, res);
         user_write(user,buffer);
         return res;
     }
 }   
 
-FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen){
+FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen, bool as_root){
    
     FRESULT res;
     DIR dir;
@@ -215,7 +215,7 @@ FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen){
 
     sscanf(cmdline,"%s %s",buffer,dirname);
     strncpy(path,dirname,sizeof(path));
-    user_set_file_path(user,path,sizeof(path));
+    if(!as_root) user_set_file_path(user,path,sizeof(path));
 
     snprintf(buffer,sizeof(buffer),"Directory listing for %s\n\r",path);
     user_write(user,buffer);
@@ -232,25 +232,78 @@ FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen){
             
             if (fno.fattrib & AM_DIR) { 
                 // It is a directory
-                snprintf(buffer,sizeof(buffer)," <DIR> %s\n", fno.fname);
+                snprintf(buffer,sizeof(buffer)," <DIR> %s\n\r", fno.fname);
                 user_write(user,buffer);
                 ndir++;
             } else { 
                 // It is a file
-                snprintf(buffer,sizeof(buffer),"%10u %s\n", (unsigned int)fno.fsize, fno.fname);
+                snprintf(buffer,sizeof(buffer),"%10u %s\n\r", (unsigned int)fno.fsize, fno.fname);
                 user_write(user,buffer);
                 nfile++;
             }
         }
         // Close the directory
         f_closedir(&dir); 
-        snprintf(buffer,sizeof(buffer),"%d dirs, %d files.\n", ndir, nfile);
+        snprintf(buffer,sizeof(buffer),"%d dirs, %d files.\n\r", ndir, nfile);
         user_write(user,buffer);
     } else {
-        snprintf(buffer, sizeof(buffer), "Failed to open \"%s\". (%u)\n", path, res);
+        snprintf(buffer, sizeof(buffer), "Failed to open \"%s\". (%u)\n\r", path, res);
         user_write(user,buffer);
     }
 
     return FR_OK;
 }
+#define BUFFER_SIZE 512
 
+FRESULT Copy_file(user_context_t *user, const char* source_file, const char* dest_file){
+    char prbuf[128];
+    FRESULT fr;                 // Result code
+    FIL src_file, dst_file;     // File objects
+    UINT br, bw;                // Bytes read, Bytes written
+    BYTE buffer[BUFFER_SIZE];   // Data buffer
+
+    // 1. Open the source file for reading
+    fr = f_open(&src_file, source_file, FA_READ);
+    if (fr != FR_OK) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to open %s: %s %d\n\r", source_file,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        return fr;
+    }
+
+    // 2. Open/create the destination file for writing
+    // FA_CREATE_ALWAYS ensures a new file is created, overwriting if it exists
+    fr = f_open(&dst_file, dest_file, FA_CREATE_ALWAYS | FA_WRITE);
+    if (fr != FR_OK) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to create %s: %s %d\n\r", dest_file,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        f_close(&src_file); // Close the source file before returning
+        return fr;
+    }
+
+    // 3. Copy data from source to destination file
+    
+    snprintf(prbuf,sizeof(prbuf),"Copying %s to %s...\n\r", source_file, dest_file);
+    user_write(user,prbuf);
+
+    for (;;) {
+        // Read a chunk of data from the source file
+        fr = f_read(&src_file, buffer, sizeof(buffer), &br);
+        if (fr != FR_OK || br == 0) break; // Error or end of file
+
+        // Write the data to the destination file
+        fr = f_write(&dst_file, buffer, br, &bw);
+        if (fr != FR_OK || bw < br) break; // Error or disk full
+    }
+
+    user_write(user,"Get has completed.\n\r");
+     // 4. Close both files
+    f_close(&dst_file);
+    f_close(&src_file);
+
+    if (fr != FR_OK) {
+        snprintf(prbuf,sizeof(prbuf),"File copy failed with result code: %s %d\n",FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+    }
+
+    return fr;
+}

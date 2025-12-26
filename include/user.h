@@ -13,6 +13,7 @@ extern "C" {
 #include "pico/multicore.h"
 #include "pico/sync.h"
 #include "interpreter.h"
+#include "debug_user.h"
 
 user_context_t * create_user_context(struct tcp_pcb *server_pcb, struct tcp_pcb *client_pcb,bool system_user);
 bool delete_user_context(user_context_t *user);
@@ -27,18 +28,16 @@ bool add_user_to_waiting(user_context_t *new_user);
 bool remove_from_list(user_context_t *new_user, user_context_t **list, semaphore_t *sema);
 bool remove_user_from_waiting(user_context_t *user);
 bool remove_user_from_list(user_context_t *user);
+user_context_t *get_next_waiting();
 
 
 int count_active_users();
-void user_print_info();
 
 user_context_t *login_user(user_context_t *user);
 bool end_user_session(struct tcp_pcb *tpcb);
 void userShell(user_context_t * user) ;
 user_context_t *get_user_list();
 user_context_t *get_user_current();
-user_context_t *init_debug_session(struct tcp_pcb *server);
-void debugger_message(char * msg);
 int getUserChar(user_context_t *user);
 bool user_write(user_context_t *user, const char *buffer);
 int putUserChar(user_context_t *user, int c);
@@ -50,6 +49,8 @@ void user_complete_read_from_input_buffer(user_context_t *user);
 int user_get_line(user_context_t *user, char *cmdline_buffer,int cmd_length);
 bool user_line_available(user_context_t * user);
 bool user_char_available( user_context_t *user);
+void user_display_library(user_context_t *user);
+void user_who(user_context_t *send_to);
  
 
 #ifdef __cplusplus

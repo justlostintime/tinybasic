@@ -9,6 +9,7 @@
 #include <malloc.h>
 
 #include "tcp_interface.h"
+#include "telnetserver.h"
 #include "user_datatypes.h"
 #include "ff.h"
 #include "f_util.h"
@@ -17,13 +18,16 @@
 #include "user.h"
 #include "FileSystem.h"
 #include "interpreter.h"
+#include "debug_user.h"
 
 #define multicore_basic 1
+
+// define the length of time basic is given before giving up control
+#define TIME_SLICE 50
 
 extern char __StackLimit, __bss_end__;
 
 extern bool SwitchUser;
-extern user_context_t *CurrentUser;         // the current tiny basic user being executed
 extern user_context_t *NewUsers;            // new users to be added to user list
 extern user_context_t *RootUser;            // Pointer to the root user
 extern user_context_t *DebugUser;           // Pointer to the debug user
@@ -34,6 +38,8 @@ extern semaphore_t new_user_list_sema;      // protect the user list against bad
 const char * Greeting = "Welcome to TinyBasic 1.0 Timeshare server\n\rlogon format 'name:password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rLog in : ";
 const char * UserLogin = "Log in : ";
 const char * UserPrompt = " > ";
+uint64_t timerStart, timerIdle, idleStart;
+bool display_who = false;
 
 void init_telnet_server(char *sid, char *password);
 
@@ -47,34 +53,34 @@ void pico_set_led(bool led_on) {
 }
 
 void user_being_removed(user_context_t *user) {
-    printf("User %s being logged off from system : ",user->username);
+    debugger_message(user,"logging Off");
     tcp_close_client(user);
-    remove_user_from_list(user);
-    delete_user_context(user);
-    printf("completed\n");
+    if(!user->persist) {
+        remove_user_from_list(user);
+        delete_user_context(user);
+    } else {
+        user->level = user_new_connect;
+        if(user->i_Core != NULL) { free(user->i_Core); user->i_Core = NULL;}
+        user->state.client_pcb = NULL;
+    }
 }   
    
 void main_user_loop() {
+    timerIdle = 0;
     while(true) {
-
-    user_context_t *user;
-    sem_acquire_blocking(&new_user_list_sema);
+        idleStart = to_ms_since_boot(get_absolute_time());
+        user_context_t *user;
         if(NewUsers){
-            user = NewUsers;
-            NewUsers = 0;
-            sem_release(&new_user_list_sema);
             //printf("Transfering user(s) from waiting to active:\n");
-            while(user) {
-                user_context_t *next_user = user->next;
-                user->next = NULL;
+            while(NewUsers) {
+                sleep_ms(1);
+                user = get_next_waiting();
+                if(user == NULL) break;
                 add_user_to_list(user);
             //    printf("%15s uid(%8X) %s\n",(user->username[0] == '\0' ? "New User": user->username) ,
-            //               user->state.client_pcb,(user->SystemUser ? "System User" : "Normal User"));
-                user = next_user;
-            }
+            //              user->state.client_pcb,(user->SystemUser ? "System User" : "Normal User"));
+            }   
             //printf(" : Transfer Complete\n");
-        } else {
-            sem_release(&new_user_list_sema);
         }
 
         user = get_user_list();
@@ -84,30 +90,43 @@ void main_user_loop() {
                 case user_new_connect:
                     if(user->state.client_pcb) {
                         user_write(user,(char *)Greeting);
-                        user->level = user_wait_loggin; // bump to wait login
+                        user->level = user_wait_loggin;         // bump to wait login
+                        user->WaitingRead = io_waiting;
                     }
                     break;
 
                 case user_wait_loggin:
-                    user_context_t *new_user, *olduser;
-                    if(user->WaitingRead == io_complete) { // we have something to proceess
-                        olduser = user;
-                        new_user = login_user(user);
-                        if(new_user)  {
-                            user = new_user;
-                            user->level = user_shell;  // bump to shell available
-                            user_write(user,(char *)UserPrompt);
-                        } else {
-                            user_write(user,(char *)UserLogin);
+                    {
+                        user_context_t *new_user;
+                        if(user->WaitingRead == io_complete) {      // we have something to proceess
+                            new_user = login_user(user);
+                            if(new_user)  {
+                                debugger_message(new_user,"Logged in");
+                                user = new_user;
+                                user->level = user_shell;           // bump to shell available
+                                if(!user->SystemUser) {
+                                    // create home directory for user if needed
+                                    if(!user_create_home_directory(user)) {
+                                        char buffer[128];
+                                        snprintf(buffer,sizeof(buffer),"Failed to create home directory for user %s\n\r",user->username);
+                                        user_write(user,buffer);
+                                        user->level=user_removed;
+                                    }
+                                }
+                                user_write(user,(char *)UserPrompt);
+                            } else {
+                                user_write(user,(char *)UserLogin);
+                            }
+                            user->WaitingRead = io_waiting;
                         }
-                        user->WaitingRead = io_waiting;
                     }
-    
                     break;
 
                 case user_shell:
                     if(user->WaitingRead == io_complete) { // we have something to proceess
+                        timerStart = to_ms_since_boot(get_absolute_time());
                         userShell(user);
+                        user->active_time_used += (to_ms_since_boot(get_absolute_time()) - timerStart);
                         if (user->level == user_shell) {
                             user_write(user,(char *)UserPrompt);
                             user->WaitingRead = io_waiting;
@@ -121,7 +140,9 @@ void main_user_loop() {
                             UserInitTinyBasic(user,(char *)0);
                         }
 
+                        timerStart = to_ms_since_boot(get_absolute_time());
                         RunTinyBasic(user);
+                        user->active_time_used += to_ms_since_boot(get_absolute_time()) - timerStart;
 
                         if(user->level==user_shell) {
                             user_write(user,(char *)UserPrompt);
@@ -135,11 +156,12 @@ void main_user_loop() {
                     continue;
 
                 default:
-                   printf("Unknown User state %d",user->level);
+                   debugger_message(user,"Unknown User state");
                    user->level = user_removed;
             }
             user = user->next;
         }
+        timerIdle += (to_ms_since_boot(get_absolute_time()) - idleStart);
     }
 }
 
@@ -170,23 +192,84 @@ bool alarm_callback(struct repeating_timer *t) {
 bool next_user_callback(struct repeating_timer *t) {
     SwitchUser = true;
 }
+// Process the special commands being passed
+char escape_buffer[10];
+char escape_index;
+bool console_escape_mode = false;
+void process_escape_commands(int16_t value) {
+
+    if(escape_index > sizeof(escape_buffer)-1) {
+        printf("Escape too long sequence recieved : ");
+        console_escape_mode = false;
+        printf("%s\r\n",escape_buffer);
+        return;
+    }
+
+    escape_buffer[escape_index++] = value;
+    escape_buffer[escape_index] = '\0';
+
+    switch(value) {
+        case 'A':               //  up arrow
+        case 'B':               //  down arrow
+        case 'C':               //  right arrow
+        case 'D':               //  left arrow
+        case 'F':               //  end key
+   
+        case '~':               //  most other keys
+                console_escape_mode = false;
+                //printf("Escape Seq : %s\r\n",escape_buffer);
+                break;
+
+        case 'H':               //  home key
+                display_who=true;
+                console_escape_mode = false;
+                break;
+        default:
+                if(!isprint(value)){
+                    printf("Invalid escape sequence character detected %2X %d",value, value);
+                    console_escape_mode = false;
+                    printf("Escape Seq : %s\r\n",escape_buffer);
+                }
+    }
+}
 
 // called when ever there is console data available
 // each byte is placed into the user's line buffer
+
 void Console_Data_Available(void *param) {
     user_context_t *user = param;
-    int value = getchar_timeout_us(0);
 
-    if((value >= 32 && value <= 126) || value == '\r') { // printable characters only
-        putchar(value);          // echo to the terminal
-        if(value == '\r') putchar( '\n');
-        user_add_char_to_input_buffer(user,value);
-    } else if(value == '\b' || value == 0x7F) {         // backspace or delete
+  read_again:
+
+    int16_t value = getchar_timeout_us(0);
+    if(value == PICO_ERROR_TIMEOUT) {
+        //printf("key timeout\n\r");
+        return;
+    }
+
+    // process special controls if recieved
+    if(value == '\e') {
+        console_escape_mode=true;
+        escape_index=0;
+        goto read_again;
+    }
+   if(console_escape_mode){
+        process_escape_commands(value);
+        goto read_again;
+
+   } else {
+        //printf("got %2X\n\r",value);
+        if((value >= 32 && value <= 126) || value == '\r') { // printable characters only
+            putchar(value);          // echo to the terminal
+            if(value == '\r') putchar( '\n');
+            user_add_char_to_input_buffer(user,value);
+        } else if(value == '\b' || value == 0x7F) {         // backspace or delete
             if(user->lineIndex == 0) return;            // nothing to do
             user_write(user,"\b \b");                   // erase the character on the console
             if(user->lineIndex > 0) user->lineIndex--;  // back up the index
             user->linebuffer[user->lineIndex] = '\0';   // remove the character
-    }  
+        }
+    }
 }
 
 int main() {
@@ -201,19 +284,20 @@ int main() {
 
     sleep_ms(5000);  // wait for console to start
 
+/*
     struct mallinfo m = mallinfo();
     uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
     uint32_t free_sram = total_heap_size - m.uordblks;
-    //printf("Base Mem used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
+    printf("Base Mem used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
  
    
-    //printf("Waiting for console to start for testing\n");
+    printf("Waiting for console to start for testing\n");
     extern char __flash_binary_start;  // defined in linker script
     extern char __flash_binary_end;    // defined in linker script
     uintptr_t start = (uintptr_t) &__flash_binary_start;
     uintptr_t end = (uintptr_t) &__flash_binary_end;
-    //printf("Binary starts at %08x and ends at %08x, size is %08x\n", start, end, end-start);
-
+    printf("Binary starts at %08x and ends at %08x, size is %08x\n", start, end, end-start);
+*/
     
     // init the filesyste,m
     init_filesys();
@@ -221,6 +305,7 @@ int main() {
     char *buffer = malloc(1024);
     char ssid_string[32];
     char password_string[32];
+
     if(buffer) {
         //printf("Allocated 1K for file system test at %08X\n",buffer);
         fr = f_open(&fil,"/system/wifi.config", FA_READ);
@@ -255,15 +340,13 @@ int main() {
     // printf("USB Clock Frequency is %d Hz\n", clock_get_hz(clk_usb));
     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
     
-    init_telnet_server(ssid_string,password_string);  // change to your ssid and password
-    
-    RootUser = CurrentUser;
+    init_telnet_server(ssid_string,password_string);  // user and pwd in /system/wifi.config
 
     // Timer example code - This example fires off the callback after 2000ms
     struct repeating_timer timer,time_slice;
     //add_alarm_in_ms(1000, alarm_callback, NULL, false);
     add_repeating_timer_ms(2000, alarm_callback, NULL, &timer);
-    add_repeating_timer_ms(100, next_user_callback, NULL, &time_slice);
+    add_repeating_timer_ms(TIME_SLICE, next_user_callback, NULL, &time_slice);
 
     // For more examples of timer use see https://github.com/raspberrypi/pico-examples/tree/master/timer
 
@@ -276,14 +359,15 @@ int main() {
 
     stdio_set_chars_available_callback(Console_Data_Available, RootUser);
 
-    //UserInitTinyBasic(RootUser,(char *)0);     // init tiny basic for root user
-    //UserInitTinyBasic(DebugUser,(char *)0);    // init tiny basic for DebugUser user
- 
-
 #ifdef multicore_basic
         multicore_launch_core1(core1_entry);
         while(true){
-            sleep_ms(1000);
+            if(display_who) {
+                 user_who(RootUser);
+                 display_who = false;
+            }
+
+            sleep_ms(100);
         }
 #else
         user_write(RootUser,(char *)UserPrompt);   // prompt for root user

@@ -95,26 +95,10 @@ err_t tcp_server_close(void *arg) {
     return err;
 }
 
-err_t tcp_server_result(void *arg, int status, char *msg) {
-    TCP_SERVER_T *state = (TCP_SERVER_T*)arg;
-    if (status == 0) {
-        DEBUG_printf("%s success\n",msg);
-    } else {
-        DEBUG_printf("%s failed %d\n",msg,  status);
-    }
-    state->complete = true;
-    struct mallinfo m = mallinfo();
-    uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
-    uint32_t free_sram = total_heap_size - m.uordblks;
-    DEBUG_printf("Base Mem used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
-    tcp_connection_count();
-    return ERR_OK; // tcp_server_close(arg);
-}
-
 err_t tcp_server_sent(void *arg, struct tcp_pcb *tpcb, u16_t len) {
     user_context_t *user = (user_context_t*)arg;
     TCP_SERVER_T *state = &user->state;
-    DEBUG_printf("tcp_server_sent %u for %6X\n", len, tpcb );
+    //printf("tcp_server_sent %u for %8X\n", len, tpcb );
     state->sent_len += len;
     user->WaitingWrite = io_none;
     return ERR_OK;
@@ -133,48 +117,48 @@ err_t tcp_server_pcb_message(void * arg, char * msg) {
     int buflen = strlen(msg);
 
     if (buflen > BUF_SIZE-1){
-        buflen = BUF_SIZE;
+        buflen = BUF_SIZE-1;
     }
 
     tcp_arg(tpcb,NULL);
     tcp_sent(tpcb, tcp_server_sent_no_user);
 
-   // printf("tcp_server_send_data - Copied data to buffer\n");
-    DEBUG_printf("TCB Writing %ld bytes to client %s port %d id %8X : %s\n", strlen(msg),
-                 ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb,msg);
 
-    cyw43_arch_lwip_check();
+    //DEBUG_printf("TCB Writing %ld bytes to client %s port %d id %8X : %s\n", buflen,
+    //             ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb,msg);
 
+    cyw43_arch_lwip_begin();
     err_t err = tcp_write(tpcb, msg, buflen, TCP_WRITE_FLAG_COPY);
+    cyw43_arch_lwip_end();
 
     if (err != ERR_OK) {
-        DEBUG_printf("Failed to write data %d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
+        printf("Failed to write via pcb data %d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
     }
     return err;
 }
 
-// updated to accept null terminated string to send
-err_t tcp_server_send_data(void *arg,char *senddata)
+// expects the correct length to send
+err_t tcp_server_send_data(void *arg,char *senddata, int len)
 {
     user_context_t *user = (user_context_t*)arg;
     TCP_SERVER_T *state = &user->state;
-    struct tcp_pcb *tpcb = user->SystemUser ? user->state.server_pcb : user->state.client_pcb;
+    struct tcp_pcb *tpcb = user->state.client_pcb;
+    if(tpcb == NULL) return ERR_OK;
 
-    int buflen = strlen(senddata);
-    //printf("tcp_server_send_data called to send %ld bytes to client %s port %d id %8X\n", buflen,
-    //       ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
+   // printf("tcp_server_send_data called to send %ld bytes to client %s port %d id %8X\n", len,
+   //        ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
 
+    int buflen = len;
     if (buflen > BUF_SIZE-1){
-        buflen = BUF_SIZE;
+        buflen = BUF_SIZE-1;
     }
 
-    strncpy((char *)&state->buffer_sent, senddata, BUF_SIZE);
+    memcpy(&state->buffer_sent,senddata,buflen);
     state->buffer_sent[buflen] = '\0';
-   // printf("tcp_server_send_data - Copied data to buffer\n");
     state->sent_len = 0;    
 
-    DEBUG_printf("Writing %ld bytes to client %s port %d id %8X : %s\n", strlen((char *)&state->buffer_sent),
-                 ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb,(char *)&state->buffer_sent);
+    //printf("Writing %ld bytes to client %s port %d id %8X : %s\n", buflen,
+    //             ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb,senddata);
 
     // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
     // can use this method to cause an assertion in debug mode, if this method is called when
@@ -183,13 +167,15 @@ err_t tcp_server_send_data(void *arg,char *senddata)
     cyw43_arch_lwip_check();
     //printf("tcp_server_send_data - cyw43_arch_lwip_check() complete \n");
 
-    err_t err = tcp_write(tpcb, state->buffer_sent, buflen, TCP_WRITE_FLAG_COPY);
+    err_t err = tcp_write(tpcb, &state->buffer_sent, buflen, TCP_WRITE_FLAG_COPY);
 
     if (err != ERR_OK) {
-        DEBUG_printf("Failed to write data %d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
+        printf("Failed to write user data Err=%d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
     } else {
+        //printf("Data Written\r\n");
         user->WaitingWrite = io_waiting;
     }
+
     return err;
 }
 
@@ -197,7 +183,26 @@ err_t tcp_server_send_data(void *arg,char *senddata)
 err_t tcp_server_send_message(void * arg, char * msg) {
     err_t err;
     cyw43_arch_lwip_begin();
-    err = tcp_server_send_data(arg,msg);
+    err = tcp_server_send_data(arg,msg,strlen(msg));
+    cyw43_arch_lwip_end();
+    return err;
+}
+
+// added version that locks and sends
+err_t tcp_server_send_msg_len(void * arg, char * msg, int len) {
+    err_t err;
+    cyw43_arch_lwip_begin();
+    err = tcp_server_send_data(arg,msg,len);
+    cyw43_arch_lwip_end();
+    return err;
+}
+
+// added version that locks and sends
+err_t tcp_server_flush(void * arg) {
+    user_context_t *user = arg;
+    err_t err;
+    cyw43_arch_lwip_begin();
+    err = tcp_output(user->state.client_pcb);
     cyw43_arch_lwip_end();
     return err;
 }
@@ -255,7 +260,7 @@ err_t tcp_server_poll(void *arg, struct tcp_pcb *tpcb) {
     user_context_t *user = (user_context_t*)arg;
     TCP_SERVER_T *state = &user->state;
     DEBUG_printf("tcp_server_poll_fn\n");
-    return tcp_server_result(user, -1,"poll"); // no response is an error?
+    return ERR_OK;      //  tcp_server_result(user, -1,"poll"); // no response is an error?
 }
 
 void tcp_server_err(void *arg, err_t err) {
@@ -263,7 +268,7 @@ void tcp_server_err(void *arg, err_t err) {
     TCP_SERVER_T *state = &user->state;
     if (err != ERR_ABRT) {
         DEBUG_printf("tcp_client_err_fn %d , client_pcb %8U\n", err, state->client_pcb);
-        tcp_server_result(user, err, "tcp_server_err");
+        // tcp_server_result(user, err, "tcp_server_err");
     }
 }
 
@@ -271,66 +276,77 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     user_context_t *user = (user_context_t*)arg;       // in this case it is the server user root
     TCP_SERVER_T *state = &user->state;                // it is the root users state we see
     if (err != ERR_OK || client_pcb == NULL) {         // check if it just failed all together
-        DEBUG_printf("Failure in accept error=%d pcb=%6X Last Error=%d\n",err,client_pcb,state->last_err);
-        tcp_server_result(arg, err, "tcp_server_accept");
+        printf("Failure in accept error=%d pcb=%6X Last Error=%d\n",err,client_pcb,state->last_err);
+        // tcp_server_result(arg, err, "tcp_server_accept");
         return ERR_OK;
     }
 
     DEBUG_printf("Client connected %s : uid %d : pcbid : %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
-    
+   
     // create a new user to use this pcb
     user_context_t * new_user = create_user_context(user->state.server_pcb, client_pcb, false);
     if (!new_user) {
-        DEBUG_printf("Failed to create user context for %s uid %d\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port);
+        printf("Failed to create user context for %s uid %d\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port);
         tcp_server_pcb_message(client_pcb,"Looks like we are too busy to allow access right now, try again later\n\r");
         return ERR_OK;
     }
-
+/*
     struct mallinfo m = mallinfo();
     uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
     uint32_t free_sram = total_heap_size - m.uordblks;
     DEBUG_printf("Base Mem used %u, Heap info: total %u, used %u, free %u\n", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
-
-    if(add_user_to_waiting(new_user)) {
-        DEBUG_printf("User context added to waiting list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
-    } else {
-        DEBUG_printf("Failed to add user context to waiting list for %s uid %d id %8H\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
-        delete_user_context(new_user);
-        tcp_close_client(user);
-        return ERR_MEM;
-    }   
+*/
 
     tcp_arg(client_pcb, new_user);
     tcp_sent(client_pcb, tcp_server_sent);
     tcp_recv(client_pcb, tcp_server_recv);
     //tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
     tcp_err(client_pcb, tcp_server_err);
-    DEBUG_printf(("Connection counter %d\n"), tcp_connection_count());
-    // user_print_info();
-    tcp_server_send_data(new_user,"Welcome to Pico timeshare\n\r");
+
+    // sleep_ms(1);  // delay for now
+    // DEBUG_printf(("Connection counter %d\n\r"), tcp_connection_count());
+    // err = tcp_server_send_data(new_user,"Welcome to Pico timeshare\n\r",27);
     // cyw43_arch_lwip_end();
+
+    if(add_user_to_waiting(new_user)) {
+        DEBUG_printf("User context added to waiting list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+    } else {
+        printf("Failed to add user context to waiting list for %s uid %d id %8H\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+        delete_user_context(new_user);
+        tcp_close_client(user);
+        return ERR_OK;
+    }   
+
+    
+    return ERR_OK;
 }
 
 bool tcp_server_open(void *arg) {
     user_context_t *user = (user_context_t *)arg;
     TCP_SERVER_T *state = &user->state;
-    DEBUG_printf("Starting root server at %s on port %u\n", ip4addr_ntoa(netif_ip4_addr(netif_list)), TCP_PORT);
+    DEBUG_printf("Starting root server at %s on port %u\n\r", ip4addr_ntoa(netif_ip4_addr(netif_list)), TCP_PORT);
 
-    struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    cyw43_arch_lwip_begin();
+        struct tcp_pcb *pcb = tcp_new_ip_type(IPADDR_TYPE_ANY);
+    cyw43_arch_lwip_end();
     if (!pcb) {
-        DEBUG_printf("failed to create root pcb\n");
+        printf("failed to create root pcb\n\r");
         return false;
     }
 
-    err_t err = tcp_bind(pcb, NULL, TCP_PORT);
+    cyw43_arch_lwip_begin();
+        err_t err = tcp_bind(pcb, NULL, TCP_PORT);
+    cyw43_arch_lwip_end();
     if (err) {
-        DEBUG_printf("root failed to bind to port %u\n", TCP_PORT);
+        printf("root failed to bind to port %u\n", TCP_PORT);
         return false;
     }
 
-    state->server_pcb = tcp_listen_with_backlog_and_err(pcb, 1,&state->last_err);
+    cyw43_arch_lwip_begin();
+        state->server_pcb = tcp_listen_with_backlog_and_err(pcb, 1, &state->last_err);
+    cyw43_arch_lwip_end();
     if (!state->server_pcb) {
-        DEBUG_printf("failed to listen\n");
+        printf("failed to listen on selected port\n\r");
         if (pcb) {
             tcp_close(pcb);
         }
@@ -344,13 +360,14 @@ bool tcp_server_open(void *arg) {
     if(add_user_to_waiting(user)) {
         DEBUG_printf("Root context added to active list id = %8X\n",state->server_pcb );
     } else {
-        DEBUG_printf("Failed to add user context to active list for root\n");
-        return ERR_MEM;
+        printf("Failed to add user context to active list for root\n");
+        return false;
     }   
 
-    tcp_arg(state->server_pcb, user);
-    tcp_accept(state->server_pcb, tcp_server_accept);
-
+    cyw43_arch_lwip_begin();
+        tcp_arg(state->server_pcb, user);
+        tcp_accept(state->server_pcb, tcp_server_accept);
+    cyw43_arch_lwip_end();
     return true;
 }
 
@@ -361,7 +378,7 @@ void run_tcp_server_test(void) {
         return;
     }
     if (!tcp_server_open(state)) {
-        tcp_server_result(state, -1, "tcp_server_test: open failed");
+        //tcp_server_result(state, -1, "tcp_server_test: open failed");
         return;
     }
     while(!state->complete) {

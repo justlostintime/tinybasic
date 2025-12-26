@@ -6,9 +6,9 @@
 #include "user.h"
 #include "tcp_interface.h"
 #include "FileSystem.h"
+#include "interpreter.h"
 
 extern  user_context_t *ActiveUsers;      // Head of linked list of active users
-extern  user_context_t *CurrentUser;      // Pointer to current user for processing
 extern  user_context_t *RootUser;         // Pointer to the root user
 extern  user_context_t *DebugUser;        // Pointer to the debug user
 extern  bool SwitchUser;                  // set when this users time slot is finished
@@ -18,11 +18,11 @@ extern  bool SwitchUser;                  // set when this users time slot is fi
 #define DefaultOutputFile "TBout.txt"
 
 /* File input/output function macros (adjust for C++ framework) */
-#define IoFileClose(fi)    f_close(fi)
-#define InFileChar(fi)     CfileRead(fi)
-#define OutFileChar(fi,ch) f_putc(ch,fi)
-#define ScreenChar(ch)     putUserChar(CurrentUser,ch)
-#define KeyInChar          (char)getUserChar(CurrentUser)
+#define IoFileClose(fi)          f_close(fi)
+#define InFileChar(user,fi)           CfileRead(user,fi)
+#define OutFileChar(fi,ch)       f_putc(ch,fi)
+#define ScreenChar(user,ch)      putUserChar(user,ch)
+#define KeyInChar(user)          (char)getUserChar(user)
 #define NeedsEcho          false
 #define BreakTest          Broken
 
@@ -32,12 +32,12 @@ extern  bool SwitchUser;                  // set when this users time slot is fi
 /* #define InFileChar(fi)     (fi->atEnd()?'\0':fi->getch()) */
 /* #define OutFileChar(fi,ch) fi->putch(ch) */
 
-char CfileRead(FIL* fi) {   /* C file reader, returns '\0' on eof */
+char CfileRead(user_context_t *user,FIL* fi) {   /* C file reader, returns '\0' on eof */
   char read_buffer[10];;
   uint  bytes_to_read = 1;
   uint  bytes_read;
   FRESULT fr;
-  fr = f_read(CurrentUser->i_inFile, read_buffer,bytes_to_read, &bytes_read);
+  fr = f_read(user->i_inFile, read_buffer,bytes_to_read, &bytes_read);
   if (FR_OK != fr) {
     printf("CfileRead f_read error: %s (%d)\n", FRESULT_str(fr), fr);
     return '\0';
@@ -46,140 +46,104 @@ char CfileRead(FIL* fi) {   /* C file reader, returns '\0' on eof */
   return chn;
 } /* ~CfileRead */
 
-/* Constants: */
-#define CoreTop USER_MEMORY_SIZE  /* Core size  16k from user datatypes*/
-#define UserProg 32   /* Core address of front of Basic program */
-#define EndUser 34    /* Core address of end of stack/user space */
-#define EndProg 36    /* Core address of end of Basic program */
-#define GoStkTop 38   /* Core address of Gosub stack top */
-#define LinoCore 40   /* Core address of "Current BASIC line number" */
-#define ILPCcore 42   /* Core address of "IL Program Counter" */
-#define BPcore 44     /* Core address of "Basic Pointer" */
-#define SvPtCore 46   /* Core address of "Saved Pointer" */
-#define InLine 48     /* Core address of input line */
-#define ExpnStk 128   /* Core address of expression stack (empty) */
-#define TabHere 191   /* Core address of output line size, for tabs */
-#define WachPoint 255 /* Core address of debug watchpoint USR */
-#define ColdGo 256    /* Core address of nominal restart USR */
-#define WarmGo 259    /* Core address of nominal warm start USR */
-#define InchSub 262   /* Core address of nominal char input USR */
-#define OutchSub 265  /* Core address of nominal char output USR */
-#define BreakSub 268  /* Core address of nominal break test USR */
-#define ExitBasic 269 /* Core address of exit BASIC USR */
-#define DumpSub 273   /* Core address of debug core dump USR */
-#define PeekSub 276   /* Core address of nominal byte peek USR */
-#define Peek2Sub 277  /* Core address of nominal 2-byte peek USR */
-#define PokeSub 280   /* Core address of nominal byte poke USR */
-#define TrLogSub 283  /* Core address of debug trace log USR */
-#define BScode 271    /* Core address of backspace code */
-#define CanCode 272   /* Core address of line cancel code */
-#define ILfront 286   /* Core address of IL code address */
-#define BadOp 15      /* illegal op, default IL code */
 
 // debug stuff
 //static int Debugging = 0;    /* >0 enables debug code */
-#define Debugging CurrentUser->i_Debugging
+#define Debugging user->i_Debugging
 //int DebugLog[LOGSIZE];       /* quietly logs recent activity */
-#define DebugLog CurrentUser->i_DebugLog
+#define DebugLog user->i_DebugLog
 //int LogHere = 0;             /* current index in DebugLog */
-#define LogHere CurrentUser->i_LogHere
+#define LogHere user->i_LogHere
 //int Watcher = 0, Watchee;    /* memory watchpoint */
-#define Watcher CurrentUser->i_Watcher
-#define Watchee CurrentUser->i_Watchee
+#define Watcher user->i_Watcher
+#define Watchee user->i_Watchee
 
 /* Static/global data: */
 //aByte Core[CoreTop];    /* everything goes in here */
-#define Core CurrentUser->i_Core
+#define Core user->i_Core
 aByte DeCaps[128];        /* capitalization table */
 
 //int Lino, ILPC;         /* current line #, IL program counter */
-#define Lino CurrentUser->i_Lino
-#define ILPC CurrentUser->i_ILPC
+#define Lino user->i_Lino
+#define ILPC user->i_ILPC
 //int BP, SvPt;           /* current, saved TB parse pointer */
-#define BP CurrentUser->i_BP
-#define SvPt CurrentUser->i_SvPt
+#define BP user->i_BP
+#define SvPt user->i_SvPt
 //int SubStk, ExpnTop;    /* stack pointers */
-#define SubStk CurrentUser->i_SubStk
-#define ExpnTop CurrentUser->i_ExpnTop
+#define SubStk user->i_SubStk
+#define ExpnTop user->i_ExpnTop
 //int InLend, SrcEnd;     /* current input line & TB source end */
-#define InLend CurrentUser->i_InLend
-#define SrcEnd CurrentUser->i_SrcEnd
+#define InLend user->i_InLend
+#define SrcEnd user->i_SrcEnd
 //int UserEnd;            // ???
-#define UserEnd CurrentUser->i_UserEnd
+#define UserEnd user->i_UserEnd
 //int ILend, XQhere;      /* end of IL code, start of execute loop */
-#define ILend CurrentUser->i_ILend
-#define XQhere CurrentUser->i_XQhere
+#define ILend user->i_ILend
+#define XQhere user->i_XQhere
 //int Broken = false;     /* set as true to stop execution or listing */
-#define Broken CurrentUser->i_Broken
+#define Broken user->i_Broken
 //FileType inFile = NULL; /* from option '-i' or user menu/button */
-#define inFile CurrentUser->i_inFile
+#define inFile user->i_inFile
 //FileType oFile = NULL;  /* from option '-o' or user menu/button */
-#define oFile CurrentUser->i_oFile
+#define oFile user->i_oFile
 
 /************************* Memory Utilities.. *************************/
 
-void Poke2(int loc, int valu) {               /* store integer as two bytes */
+void Poke2(user_context_t *user,int loc, int valu) {               /* store integer as two bytes */
   Core[loc] = (aByte)((valu>>8)&255);         /* nominally Big-Endian */
   Core[loc+1] = (aByte)(valu&255);
 }           /* ~Poke2 */
 
-int Peek2(int loc) {                          /* fetch integer from two bytes */
+int Peek2(user_context_t *user,int loc) {                          /* fetch integer from two bytes */
   return ((int)Core[loc])*256 + ((int)Core[loc+1]);
-} /* ~Peek2 */
-
-void user_Poke2(user_context_t*user, int loc, int valu) {               /* store integer as two bytes */
-  user->i_Core[loc] = (aByte)((valu>>8)&255);         /* nominally Big-Endian */
-  user->i_Core[loc+1] = (aByte)(valu&255);
-}           /* ~Poke2 */
-
-int user_Peek2(user_context_t *user, int loc) {                          /* fetch integer from two bytes */
-  return ((int)user->i_Core[loc])*256 + ((int)user->i_Core[loc+1]);
 } /* ~Peek2 */
 
 //************************** I/O Utilities... **************************
 
-void Ouch(char ch) {                         /* output char to stdout */
+void Ouch(user_context_t *user,char ch) {                         /* output char to stdout */
   if (oFile != NULL) {                       /* there is an output file.. */
     if (ch>=' ') OutFileChar(oFile,ch);
     else if (ch == '\r') OutFileChar(oFile,'\n');
   }
   if (ch=='\r') {
     Core[TabHere] = 0;                    /* keep count of how long this line is */
-    ScreenChar('\n');
-    ScreenChar('\r');}
-  else if (ch>=' ') if (ch<='~') {           /* ignore non-print control chars */
+    ScreenChar(user,'\n');
+    ScreenChar(user,'\r');}
+  //else if (ch>=' ') if (ch<='~') {           /* ignore non-print control chars */
+  else {
     Core[TabHere]++;
-    ScreenChar(ch);
+    ScreenChar(user,ch);
   }
 } // ~Ouch
 
-char Inch(void) {                            /* read input character from stdin or file */
+char Inch(user_context_t *user) {                            /* read input character from stdin or file */
   char ch;
   if (inFile != NULL) {                      /* there is a file to get input from.. */
-    ch = InFileChar(inFile);
+    ch = InFileChar(user,inFile);
     if (ch == '\n') ch = '\r';
     if (ch == '\0') {                        /* switch over to console input at eof */
       IoFileClose(inFile);
       free(inFile);
       inFile = NULL;
-      user_write(CurrentUser,"\n\r");       /* notify user of eof on file */
-      if(CurrentUser->ExitWhenDone) {
-        CurrentUser->ExitWhenDone = false;
-        CurrentUser->level=user_shell;
+      user_write(user,"\n\r");       /* notify user of eof on file */
+      if(user->ExitWhenDone) {
+        user->ExitWhenDone = false;
+        user->level=user_shell;
+        user->echo = true;
         SwitchUser = true;
       }
     }
     else {
-      Ouch(ch);                              /* echo input to screen (but not output file) */
+      if(user->echo) Ouch(user,ch);      /* echo input to screen (but not output file) */
       return ch;
     }
   }
 
-  ch = KeyInChar;                             /* get input from stdin */
+  ch = KeyInChar(user);                             /* get input from stdin */
 
   if (NeedsEcho) {
-     ScreenChar(ch);                          /* alternative input may need this */
-     if (ch == '\r') ScreenChar('\n');
+     ScreenChar(user,ch);                          /* alternative input may need this */
+     if (ch == '\r') ScreenChar(user,'\n');
   }
 
   if (oFile != NULL) OutFileChar(oFile,ch);   /* echo it to output file */
@@ -190,135 +154,135 @@ char Inch(void) {                            /* read input character from stdin 
   return ch;
 } /* ~Inch */
 
-int StopIt(void) {return BreakTest;}   /* ~StopIt, .. not implemented */
+int StopIt(user_context_t *user) {return BreakTest;}   /* ~StopIt, .. not implemented */
 
-void OutStr(char* theMsg) {         /* output a string to the console */
-  while (*theMsg != '\0') Ouch(*theMsg++);} /* ~OutStr */
+void OutStr(user_context_t *user,char* theMsg) {         /* output a string to the console */
+  while (*theMsg != '\0') Ouch(user,*theMsg++);} /* ~OutStr */
 
-void OutLn(void) {            /* terminate output line to the console */
-  OutStr("\r");} /* ~OutLn */
+void OutLn(user_context_t *user) {            /* terminate output line to the console */
+  OutStr(user,"\r");} /* ~OutLn */
 
-void OutInt(int theNum) {           /* output a number to the console */
+void OutInt(user_context_t *user,int theNum) {           /* output a number to the console */
   if (theNum<0) {
-    Ouch('-');
+    Ouch(user,'-');
     theNum = -theNum;}
-  if (theNum>9) OutInt(theNum/10);
-  Ouch((char)(theNum%10+48));} /* ~OutInt */
+  if (theNum>9) OutInt(user,theNum/10);
+  Ouch(user,(char)(theNum%10+48));} /* ~OutInt */
 
 /*********************** Debugging Utilities... ***********************/
 
-void OutHex(int num, int nd) {  /* output a hex number to the console */
-  if (nd>1) OutHex(num>>4, nd-1);
+void OutHex(user_context_t *user,int num, int nd) {  /* output a hex number to the console */
+  if (nd>1) OutHex(user,num>>4, nd-1);
   num = num&15;
-  if (num>9) Ouch((char)(num+55));
-    else Ouch((char)(num+48));} /* ~OutHex */
+  if (num>9) Ouch(user,(char)(num+55));
+    else Ouch(user,(char)(num+48));} /* ~OutHex */
 
-void ShowSubs(void) {       /* display subroutine stack for debugging */
+void ShowSubs(user_context_t *user) {       /* display subroutine stack for debugging */
   int ix;
-  OutLn(); OutStr(" [Stk "); OutHex(SubStk,5);
+  OutLn(user); OutStr(user," [Stk "); OutHex(user,SubStk,5);
   for (ix=SubStk; ix<UserEnd; ix++) {
-    OutStr(" ");
-    OutInt(Peek2(ix++));}
-  OutStr("]");} /* ~ShowSubs */
+    OutStr(user," ");
+    OutInt(user,Peek2(user,ix++));}
+  OutStr(user,"]");} /* ~ShowSubs */
 
-void ShowExSt(void) {       /* display expression stack for debugging */
+void ShowExSt(user_context_t *user) {       /* display expression stack for debugging */
   int ix;
-  OutLn(); OutStr(" [Exp "); OutHex(ExpnTop,3);
+  OutLn(user); OutStr(user," [Exp "); OutHex(user,ExpnTop,3);
   if ((ExpnTop&1)==0) for (ix=ExpnTop; ix<ExpnStk; ix++) {
-    OutStr(" ");
-    OutInt((int)((short)Peek2(ix++)));}
+    OutStr(user," ");
+    OutInt(user,(int)((short)Peek2(user,ix++)));}
   else for (ix=ExpnTop; ix<ExpnStk; ix++) {
-    OutStr(".");
-    OutInt((int)Core[ix]);}
-  OutStr("]");} /* ~ShowExSt */
+    OutStr(user,".");
+    OutInt(user,(int)Core[ix]);}
+  OutStr(user,"]");} /* ~ShowExSt */
 
-void ShowVars(int whom) {               /* display vars for debugging */
+void ShowVars(user_context_t *user,int whom) {               /* display vars for debugging */
   int ix, valu = 1, prior = 1;
   if (whom==0) whom = 26; else {
     whom = (whom>>1)&31;             /* whom is a specified var, or 0 */
     valu = whom;}
-  OutLn(); OutStr("  [Vars");
+  OutLn(user); OutStr(user,"  [Vars");
   for (ix=valu; ix<=whom; ix++) {  /* all non-zero vars, or else whom */
-    valu = (int)((short)Peek2(ix*2+ExpnStk));
+    valu = (int)((short)Peek2(user,ix*2+ExpnStk));
     if (valu==0) if (prior==0) continue;          /* omit multiple 0s */
     prior = valu;
-    OutStr(" ");
-    Ouch((char)(ix+64));                             /* show var name */
-    OutStr("=");
-    OutInt(valu);}
-  OutStr("]");} /* ~ShowVars */
+    OutStr(user," ");
+    Ouch(user,(char)(ix+64));                             /* show var name */
+    OutStr(user,"=");
+    OutInt(user,valu);}
+  OutStr(user,"]");} /* ~ShowVars */
 
-void ShoMemDump(int here, int nlocs) {     /* display hex memory dump */
+void ShoMemDump(user_context_t *user,int here, int nlocs) {     /* display hex memory dump */
   int temp, thar = here&-16;
   while (nlocs>0) {
     temp = thar;
-    OutLn();
-    OutHex(here,4);
-    OutStr(": ");
-    while (thar<here) {OutStr("   "); thar++;}
+    OutLn(user);
+    OutHex(user,here,4);
+    OutStr(user,": ");
+    while (thar<here) {OutStr(user,"   "); thar++;}
     do {
-      OutStr(" ");
-      if (nlocs-- >0) OutHex(Core[here],2);
-        else OutStr("  ");}
+      OutStr(user," ");
+      if (nlocs-- >0) OutHex(user,Core[here],2);
+        else OutStr(user,"  ");}
       while (++here%16 !=0);
-    OutStr("  ");
-    while (temp<thar) {OutStr(" "); temp++;}
+    OutStr(user,"  ");
+    while (temp<thar) {OutStr(user," "); temp++;}
     while (thar<here) {
       if (nlocs<0) if ((thar&15) >= nlocs+16) break;
       temp = Core[thar++];
-      if (temp == (int)'\r') Ouch('\\');
-      else if (temp<32) Ouch('`');
-      else if (temp>126) Ouch('~');
-        else Ouch((char)temp);}}
-  OutLn();} /* ~ShoMemDump */
+      if (temp == (int)'\r') Ouch(user,'\\');
+      else if (temp<32) Ouch(user,'`');
+      else if (temp>126) Ouch(user,'~');
+        else Ouch(user,(char)temp);}}
+  OutLn(user);} /* ~ShoMemDump */
 
-void ShoLogVal(int item) {   /* format & output one activity log item */
+void ShoLogVal(user_context_t *user,int item) {   /* format & output one activity log item */
   int valu = DebugLog[item];
-  OutLn();
+  OutLn(user);
   if (valu < -65536) {                         /* store to a variable */
-    Ouch((char)(((valu>>17)&31)+64));
-    OutStr("=");
-    OutInt((valu&0x7FFF)-(valu&0x8000));}
+    Ouch(user,(char)(((valu>>17)&31)+64));
+    OutStr(user,"=");
+    OutInt(user,(valu&0x7FFF)-(valu&0x8000));}
   else if (valu < -32768) {                                /* error # */
-    OutStr("Err ");
-    OutInt(-valu-32768);}
+    OutStr(user,"Err ");
+    OutInt(user,-valu-32768);}
   else if (valu<0) {                 /* only logs IL sequence changes */
-    OutStr("  IL+");
-    OutHex(-Peek2(ILfront)-valu,3);}
+    OutStr(user,"  IL+");
+    OutHex(user,-Peek2(user,ILfront)-valu,3);}
   else if (valu<65536) {                          /* TinyBasic line # */
-    OutStr("#");
-    OutInt(valu);}
+    OutStr(user,"#");
+    OutInt(user,valu);}
   else {                                          /* poke memory byte */
-    OutStr("!");
-    OutHex(valu,4);
-    OutStr("=");
-    OutInt(valu>>16);}} /* ~ShoLogVal */
+    OutStr(user,"!");
+    OutHex(user,valu,4);
+    OutStr(user,"=");
+    OutInt(user,valu>>16);}} /* ~ShoLogVal */
 
-void ShowLog(void) {            /* display activity log for debugging */
+void ShowLog(user_context_t *user) {            /* display activity log for debugging */
   int ix;
-  OutLn();
-  OutStr("*** Activity Log @ ");
-  OutInt(LogHere);
-  OutStr(" ***");
-  if (LogHere >= LOGSIZE)   /* circular, show only last 4K activities */
-    for (ix=(LogHere&(LOGSIZE-1)); ix<LOGSIZE; ix++) ShoLogVal(ix);
-  for (ix=0; ix<(LogHere&(LOGSIZE-1)); ix++) ShoLogVal(ix);
-  OutLn();
-  OutStr("*****");
-  OutLn();} /* ~ShowLog */
+  OutLn(user);
+  OutStr(user,"*** Activity Log @ ");
+  OutInt(user,LogHere);
+  OutStr(user," ***");
+  if (LogHere >= LOGSIZE)   // circular, show only last 4K activities
+    for (ix=(LogHere&(LOGSIZE-1)); ix<LOGSIZE; ix++) ShoLogVal(user,ix);
+  for (ix=0; ix<(LogHere&(LOGSIZE-1)); ix++) ShoLogVal(user,ix);
+  OutLn(user);
+  OutStr(user,"*****");
+  OutLn(user);}                       // ~ShowLog
 
-void LogIt(int valu) {          /* insert this value into activity log */
+void LogIt(user_context_t *user,int valu) {          // insert this value into activity log
   DebugLog[(LogHere++)&(LOGSIZE-1)] = valu;}
 
-/************************ Utility functions... ************************/
+//************************ Utility functions... ************************
 
-void WarmStart(user_context_t *user) {                 /* initialize existing program */
-  user->i_UserEnd = user_Peek2(user,EndUser);
-  user->i_SubStk = UserEnd;                           /* empty subroutine, expression stacks */
-  user_Poke2(user,GoStkTop,user->i_SubStk);
+void WarmStart(user_context_t *user) {                 // initialize existing program
+  user->i_UserEnd = Peek2(user,EndUser);
+  user->i_SubStk = UserEnd;                           // empty subroutine, expression stacks
+  Poke2(user,GoStkTop,user->i_SubStk);
   user->i_ExpnTop = ExpnStk;
-  user->i_Lino = 0;                                        /* not in any line */
-  user->i_ILPC = 0;                                      /* start IL at front */
+  user->i_Lino = 0;                                   // not in any line
+  user->i_ILPC = 0;                                   // start IL at front
   user->i_SvPt = InLine;
   user->i_BP = InLine;
   user->i_Core[user->i_BP] = 0;
@@ -326,86 +290,87 @@ void WarmStart(user_context_t *user) {                 /* initialize existing pr
   user->i_InLend = InLine;
 } /* ~WarmStart */
 
-void ColdStart(user_context_t *user) {                 /* initialize program to empty */
-  if (user_Peek2(user,ILfront) != ILfront+2) user->i_ILend = user_Peek2(user,ILfront)+0x800;
-  user_Poke2(user,UserProg,(user->i_ILend+255)&-256);   /* start Basic shortly after IL */
+void ColdStart(user_context_t *user) {                 // initialize program to empty
+  if (Peek2(user,ILfront) != ILfront+2) 
+    user->i_ILend = Peek2(user,ILfront)+0x800;
+  Poke2(user,UserProg,(user->i_ILend+255)&-256);      // start Basic shortly after IL
   if (CoreTop>65535) {
-    user_Poke2(user,EndUser,65534);
-    user_Poke2(user,65534,0xDEAD);}
-  else user_Poke2(user,EndUser,CoreTop);
+    Poke2(user,EndUser,65534);
+    Poke2(user,65534,0xDEAD);}
+  else Poke2(user,EndUser,CoreTop);
   WarmStart(user);
-  SrcEnd = user_Peek2(user,UserProg);
-  user_Poke2(user,SrcEnd++,0);
-  user_Poke2(user,EndProg,++SrcEnd);
+  SrcEnd = Peek2(user,UserProg);
+  Poke2(user,SrcEnd++,0);
+  Poke2(user,EndProg,++SrcEnd);
 } /* ~ColdStart */
 
-void TBerror(void) {                      /* report interpreter error */
-  if (ILPC == 0) return;                       /* already reported it */
-  OutLn();
-  LogIt(-ILPC-32768);
-  OutStr("Tiny Basic error #");          /* IL address is the error # */
-  OutInt(ILPC-Peek2(ILfront));
-  if (Lino>0) {                          /* Lino=0 if in command line */
-    OutStr(" at line ");
-    OutInt(Lino);}
-  OutLn();
-  if (Debugging>0) {                /* some extra info if debugging.. */
-    ShowSubs();
-    ShowExSt();
-    ShowVars(0);
-    OutStr(" [BP=");
-    OutHex(BP,4);
-    OutStr(", TB@");
-    OutHex(Peek2(UserProg),4);
-    OutStr(", IL@");
-    OutHex(Peek2(ILfront),4);
-    OutStr("]");
-    ShoMemDump((BP-30)&-16,64);}
-  Lino = 0;                           /* restart interpreter at front */
-  ExpnTop = ExpnStk;                   /* with empty expression stack */
-  ILPC = 0;       /* cheap error test; interp reloads it from ILfront */
+void TBerror(user_context_t *user) {                // report interpreter error
+  if (ILPC == 0) return;                            // already reported it
+  OutLn(user);
+  LogIt(user,-ILPC-32768);
+  OutStr(user,"Tiny Basic error #");                // IL address is the error #
+  OutInt(user,ILPC-Peek2(user,ILfront));
+  if (Lino>0) {                                     // Lino=0 if in command line
+    OutStr(user," at line ");
+    OutInt(user,Lino);}
+  OutLn(user);
+  if (Debugging>0) {                                // some extra info if debugging..
+    ShowSubs(user);
+    ShowExSt(user);
+    ShowVars(user,0);
+    OutStr(user," [BP=");
+    OutHex(user,BP,4);
+    OutStr(user,", TB@");
+    OutHex(user,Peek2(user,UserProg),4);
+    OutStr(user,", IL@");
+    OutHex(user,Peek2(user,ILfront),4);
+    OutStr(user,"]");
+    ShoMemDump(user,(BP-30)&-16,64);}
+  Lino = 0;                                       // restart interpreter at front
+  ExpnTop = ExpnStk;                              // with empty expression stack
+  ILPC = 0;                                       // cheap error test; interp reloads it from ILfront
   BP = InLine;} /* ~TBerror */
 
-void PushSub(int valu) {               /* push value onto Gosub stack */
-  if (SubStk<=SrcEnd) TBerror(); /* overflow: bumped into program end */
+void PushSub(user_context_t *user,int valu) {                     // push value onto Gosub stack
+  if (SubStk<=SrcEnd) TBerror(user);              // overflow: bumped into program end
   else {
     SubStk = SubStk-2;
-    Poke2(GoStkTop,SubStk);
-    Poke2(SubStk,valu);}
-  if (Debugging>0) ShowSubs();} /* ~PushSub */
+    Poke2(user,GoStkTop,SubStk);
+    Poke2(user,SubStk,valu);}
+  if (Debugging>0) ShowSubs(user);}               // ~PushSub
 
-int PopSub(void) {                       /* pop value off Gosub stack */
-  if (SubStk>=Peek2(EndUser)-1) {   /* underflow (nothing in stack).. */
-    TBerror();
+int PopSub(user_context_t *user) {                       /* pop value off Gosub stack */
+  if (SubStk>=Peek2(user,EndUser)-1) {   /* underflow (nothing in stack).. */
+    TBerror(user);
     return -1;}
   else {
-      if (Debugging>1) ShowSubs();
+      if (Debugging>1) ShowSubs(user);
     SubStk = SubStk+2;
-    Poke2(GoStkTop,SubStk);
-    return Peek2(SubStk-2);}} /* ~PopSub */
+    Poke2(user,GoStkTop,SubStk);
+    return Peek2(user,SubStk-2);}} /* ~PopSub */
 
-void PushExBy(int valu) {          /* push byte onto expression stack */
-  if (ExpnTop<=InLend) TBerror(); /* overflow: bumped into input line */
+void PushExBy(user_context_t *user,int valu) {          /* push byte onto expression stack */
+  if (ExpnTop<=InLend) TBerror(user); /* overflow: bumped into input line */
     else Core[--ExpnTop] = (aByte)(valu&255);
-  if (Debugging>0) ShowExSt();} /* ~PushExBy */
+  if (Debugging>0) ShowExSt(user);} /* ~PushExBy */
 
-int PopExBy(void) {                  /* pop byte off expression stack */
+int PopExBy(user_context_t *user) {                  /* pop byte off expression stack */
   if (ExpnTop<ExpnStk) return (int)Core[ExpnTop++];
-  TBerror();                          /* underflow (nothing in stack) */
+  TBerror(user);                          /* underflow (nothing in stack) */
   return -1;} /* ~PopExBy */
 
-void PushExInt(int valu) {      /* push integer onto expression stack */
+void PushExInt(user_context_t *user,int valu) {      /* push integer onto expression stack */
   ExpnTop = ExpnTop-2;
-  if (ExpnTop<InLend) TBerror();  /* overflow: bumped into input line */
-    else Poke2(ExpnTop,valu);
-  if (Debugging>0) ShowExSt();} /* ~PushExInt */
+  if (ExpnTop<InLend) TBerror(user);  /* overflow: bumped into input line */
+    else Poke2(user,ExpnTop,valu);
+  if (Debugging>0) ShowExSt(user);} /* ~PushExInt */
 
-int PopExInt(void) {              /* pop integer off expression stack */
-  if (++ExpnTop<ExpnStk) return (int)((short)Peek2((ExpnTop++)-1));
-  TBerror();    /* underflow (nothing in stack) */
+int PopExInt(user_context_t *user) {              /* pop integer off expression stack */
+  if (++ExpnTop<ExpnStk) return (int)((short)Peek2(user,(ExpnTop++)-1));
+  TBerror(user);    /* underflow (nothing in stack) */
   return -1;} /* ~PopExInt */
 
-int DeHex(char* txt, int ndigs) {                /* decode hex -> int */
+int DeHex(user_context_t *user,char* txt, int ndigs) {                /* decode hex -> int */
   int num = 0;
   char ch = ' ';
   while (ch<'0')                              /* first skip to num... */
@@ -419,52 +384,52 @@ int DeHex(char* txt, int ndigs) {                /* decode hex -> int */
     ch = DeCaps[((int)*txt++)&127];}
   return num;} /* ~DeHex */
 
-int SkipTo(int here, char fch) {     /* search for'd past next marker */
+int SkipTo(user_context_t *user,int here, char fch) {     /* search for'd past next marker */
   while (true) {
     char ch = (char)Core[here++];                /* look at next char */
     if (ch == fch) return here;                             /* got it */
     if (ch == '\0') return --here;}} /* ~SkipTo */
 
-int FindLine(int theLine) {         /* find theLine in TB source code */
+int FindLine(user_context_t *user,int theLine) {         /* find theLine in TB source code */
   int ix;
-  int here = Peek2(UserProg);                       /* start at front */
+  int here = Peek2(user,UserProg);                       /* start at front */
   while (true) {
-    ix = Peek2(here++);
+    ix = Peek2(user,here++);
     if (theLine<=ix || ix==0) return --here;  /* found it or overshot */
-    here = SkipTo(++here, '\r');}         /* skip to end of this line */
+    here = SkipTo(user,++here, '\r');}         /* skip to end of this line */
   } /* ~FindLine */
 
-void GoToLino(void) {     /* find line # Lino and set BP to its front */
+void GoToLino(user_context_t *user) {     /* find line # Lino and set BP to its front */
   int here;
   if (Lino <= 0) {              /* Lino=0 is just command line (OK).. */
     BP = InLine;
-    if (DEBUGON>0) LogIt(0);
+    if (DEBUGON>0) LogIt(user,0);
     return;}
-  if (DEBUGON>0) LogIt(Lino);
-  if (Debugging>0) {OutStr(" [#"); OutInt(Lino); OutStr("]");}
-  BP = FindLine(Lino);                  /* otherwise try to find it.. */
-  here = Peek2(BP++);
-  if (here==0) TBerror();               /* ran off the end, error off */
-  else if (Lino != here) TBerror();                      /* not there */
+  if (DEBUGON>0) LogIt(user,Lino);
+  if (Debugging>0) {OutStr(user," [#"); OutInt(user,Lino); OutStr(user,"]");}
+  BP = FindLine(user,Lino);                  /* otherwise try to find it.. */
+  here = Peek2(user,BP++);
+  if (here==0) TBerror(user);               /* ran off the end, error off */
+  else if (Lino != here) TBerror(user);                      /* not there */
     else BP++;} /* ~GoToLino */                             /* got it */
 
-void ListIt(int frm, int too) {            /* list the stored program */
+void ListIt(user_context_t *user,int frm, int too) {            /* list the stored program */
   char ch;
   int here;
   if (frm==0) {           /* 0,0 defaults to all; n,0 defaults to n,n */
     too = 65535;
     frm = 1;}
   else if (too==0) too = frm;
-  here = FindLine(frm);                   /* try to find first line.. */
-  while (!StopIt()) {
-    frm = Peek2(here++);             /* get this line's # to print it */
+  here = FindLine(user,frm);                   /* try to find first line.. */
+  while (!StopIt(user)) {
+    frm = Peek2(user,here++);             /* get this line's # to print it */
     if (frm>too || frm==0) break;
     here++;
-    OutInt(frm);
-    Ouch(' ');
+    OutInt(user,frm);
+    Ouch(user,' ');
     do {                                            /* print the text */
       ch = (char)Core[here++];
-      Ouch(ch);}
+      Ouch(user,ch);}
       while (ch>'\r');}} /* ~ListIt */
 
 // this just takes the il file which was compiled some where and
@@ -472,8 +437,9 @@ void ListIt(int frm, int too) {            /* list the stored program */
 void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL code */
   int valu;
   user->i_ILend = ILfront+2;
-  user_Poke2(user,ILfront,user->i_ILend);               /* initialize pointers as promised in TBEK */
-  user_Poke2(user,ColdGo+1,user->i_ILend);
+  //printf("IL program starts at core[%d]\n\r",user->i_ILend);
+  Poke2(user,ILfront,user->i_ILend);                    /* initialize pointers as promised in TBEK */
+  Poke2(user,ColdGo+1,user->i_ILend);
   user->i_Core[user->i_ILend] = (aByte)BadOp;           /* illegal op, in case nothing loaded */
   if (txt == NULL) return;
   while (*txt != '\0') {                                /* get the data.. */
@@ -482,15 +448,16 @@ void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL c
     while (*txt > ' ') txt++;                           /* skip over address */
     if (*txt++ == '\0') break;
     while (true) {
-      valu = DeHex(txt++, 2);                           /* get a byte */
+      valu = DeHex(user,txt++, 2);                      /* get a byte */
       if (valu<0) break;                                /* no more on this line */
       user->i_Core[user->i_ILend++] = (aByte)valu;      /* insert this byte into code */
       txt++;}}
+  //printf("IL Code ends at core[%d]\r\n",user->i_ILend);
   user->i_XQhere = 0;                                   /* requires new XQ to initialize */
-  user->i_Core[user->i_ILend] = 0;
+  user->i_Core[user->i_ILend] = 0;                      // set user code space to 0 for empty program
 }
 
-void LineSwap(int here) {   /* swap SvPt/BP if here is not in InLine  */
+void LineSwap(user_context_t *user,int here) {   /* swap SvPt/BP if here is not in InLine  */
   if (here<InLine || here>=InLend) {
     here = SvPt;
     SvPt = BP;
@@ -512,55 +479,55 @@ void Interp(user_context_t *user) {
   int op, ix, here, chpt;                                    /* temps */
   Broken = false;          /* initialize this for possible later test */
   //static bool writeit = true;
-  CurrentUser = user;
   while (!SwitchUser) {
-    if(CurrentUser->WaitingRead==io_waiting || CurrentUser->WaitingWrite==io_waiting) {
-      // if(writeit) {printf("read %d, write %d",CurrentUser->WaitingRead, CurrentUser->WaitingWrite); writeit=false;}
+    if(user->WaitingRead==io_waiting || user->WaitingWrite==io_waiting) {
+      // if(writeit) {printf("read %d, write %d",user->WaitingRead, user->WaitingWrite); writeit=false;}
        SwitchUser = true;    // if this is waiting for input info or output to be sent 
        continue;
     }
 
     //writeit=true;
 
-    if (StopIt()) {
+    if (StopIt(user)) {
       Broken = false;
-      OutLn();
-      OutStr("*** User Break ***");
-      TBerror();}
+      OutLn(user);
+      OutStr(user,"*** User Break ***");
+      TBerror(user);}
     if (ILPC==0) {
-      ILPC = Peek2(ILfront);
-      if (DEBUGON>0) LogIt(-ILPC);
+      ILPC = Peek2(user,ILfront);
+      if (DEBUGON>0) LogIt(user,-ILPC);
       if (Debugging>0) {
-        OutLn(); OutStr("[IL="); OutHex(ILPC,4); OutStr("]");
+        OutLn(user); OutStr(user,"[IL="); OutHex(user,ILPC,4); OutStr(user,"]");
       }
     }
     if (DEBUGON>0) if (Watcher>0) {             /* check watchpoint.. */
       if (((Watchee<0) && (Watchee+256+(int)Core[Watcher]) !=0)
           || ((Watchee >= 0) && (Watchee==(int)Core[Watcher]))) {
-        OutLn();
-        OutStr("*** Watched ");
-        OutHex(Watcher,4);
-        OutStr(" = ");
-        OutInt((int)Core[Watcher]);
-        OutStr(" *** ");
+        OutLn(user);
+        OutStr(user,"*** Watched ");
+        OutHex(user,Watcher,4);
+        OutStr(user," = ");
+        OutInt(user,(int)Core[Watcher]);
+        OutStr(user," *** ");
         Watcher = 0;
-        TBerror();
+        TBerror(user);
         continue;
       }
     }
+
     op = (int)Core[ILPC++];
     
     if (Debugging>0) {
-        OutLn(); OutStr("[IL+");
-        OutHex(ILPC-Peek2(ILfront)-1,3);
-        OutStr("=");
-        OutHex(op,2);
-        OutStr("]");
+        OutLn(user); OutStr(user,"[IL+");
+        OutHex(user,ILPC-Peek2(user,ILfront)-1,3);
+        OutStr(user,"=");
+        OutHex(user,op,2);
+        OutStr(user,"]");
     }
     switch (op>>5) {
     default: switch (op) {
       case 15:
-        TBerror();
+        TBerror(user);
         return;
 
 /* SX n    00-07   Stack Exchange. */
@@ -569,12 +536,12 @@ void Interp(user_context_t *user) {
 /* considered to be byte 0, so SX 0 does nothing.                     */
       case 1: case 2: case 3: case 4: case 5: case 6: case 7:
         if (ExpnTop+op>=ExpnStk) {       /* swap is below stack depth */
-          TBerror();
+          TBerror(user);
           return;}
         ix = (int)Core[ExpnTop];
         Core[ExpnTop] = Core[ExpnTop+op];
         Core[ExpnTop+op] = (aByte)ix;
-        if (Debugging>0) ShowExSt();
+        if (Debugging>0) ShowExSt(user);
         break;
 
 /* LB n    09nn    Push Literal Byte onto Stack.                      */
@@ -582,7 +549,7 @@ void Interp(user_context_t *user) {
 /* is the second byte of the instruction. An error stop will occur if */
 /* the stack overflows. */
       case 9:
-        PushExBy((int)Core[ILPC++]);                  /* push IL byte */
+        PushExBy(user,(int)Core[ILPC++]);             /* push IL byte */
         break;
 
 /* LN n    0Annnn  Push Literal Number.                               */
@@ -590,7 +557,7 @@ void Interp(user_context_t *user) {
 /* computational stack, as a 16-bit number. Stack overflow results in */
 /* an error stop. Numbers are assumed to be Big-Endian.               */
       case 10:
-        PushExInt(Peek2(ILPC++));              /* get next 2 IL bytes */
+        PushExInt(user,Peek2(user,ILPC++));              /* get next 2 IL bytes */
         ILPC++;
         break;
 
@@ -599,18 +566,18 @@ void Interp(user_context_t *user) {
 /* bytes (1 int) on the expression stack or if the stack overflows.   */
       case 11:
         op = ExpnTop;
-        ix = PopExInt();
+        ix = PopExInt(user);
         if (ILPC == 0) break;                            /* underflow */
         ExpnTop = op;
-        PushExInt(ix);
+        PushExInt(user,ix);
         break;
 
 /* SP      0C      Stack Pop.                                         */
 /*                 The top two bytes are removed from the expression  */
 /* stack and discarded. Underflow results in an error stop.           */
       case 12:
-        ix = PopExInt();
-          if (Debugging>0) ShowExSt();
+        ix = PopExInt(user);
+          if (Debugging>0) ShowExSt(user);
         break;
 
 /* SB      10      Save BASIC Pointer.                                */
@@ -618,7 +585,7 @@ void Interp(user_context_t *user) {
 /* buffer, it is copied to the Saved Pointer; otherwise the two       */
 /* pointers are exchanged.                                            */
       case 16:
-        LineSwap(BP);
+        LineSwap(user,BP);
         break;
 
 /* RB      11      Restore BASIC Pointer.                             */
@@ -626,7 +593,7 @@ void Interp(user_context_t *user) {
 /* buffer, it is replaced by the value in the BASIC pointer;          */
 /* otherwise the two pointers are exchanged.                          */
       case 17:
-        LineSwap(SvPt);
+        LineSwap(user,SvPt);
         break;
 
 /* FV      12      Fetch Variable.                                    */
@@ -634,9 +601,9 @@ void Interp(user_context_t *user) {
 /* index into Page 00. It is replaced by the two bytes fetched. Error */
 /* stops occur with stack overflow or underflow.                      */
       case 18:
-        op = PopExBy();
-        if (ILPC != 0) PushExInt(Peek2(op));
-          if (Debugging>1) ShowVars(op);
+        op = PopExBy(user);
+        if (ILPC != 0) PushExInt(user,Peek2(user,op));
+          if (Debugging>1) ShowVars(user,op);
         break;
 
 /* SV      13      Store Variable.                                    */
@@ -645,12 +612,12 @@ void Interp(user_context_t *user) {
 /* byte on the stack. All three bytes are deleted from the stack.     */
 /* Underflow results in an error stop.                                */
       case 19:
-        ix = PopExInt();
-        op = PopExBy();
+        ix = PopExInt(user);
+        op = PopExBy(user);
         if (ILPC == 0) break;
-        Poke2(op,ix);
-          if (DEBUGON>0) LogIt((ix&0xFFFF)+((op-256)<<16));
-          if (Debugging>0) {ShowVars(op); if (Debugging>1) ShowExSt();}
+        Poke2(user,op,ix);
+          if (DEBUGON>0) LogIt(user,(ix&0xFFFF)+((op-256)<<16));
+          if (Debugging>0) {ShowVars(user,op); if (Debugging>1) ShowExSt(user);}
         break;
 
 /* GS      14      GOSUB Save.                                        */
@@ -659,7 +626,7 @@ void Interp(user_context_t *user) {
 /* the IL stack be empty for this to work properly but no check is    */
 /* made for that condition. An error stop occurs on stack overflow.   */
       case 20:
-        PushSub(Lino);                   /* push line # (possibly =0) */
+        PushSub(user,Lino);                   /* push line # (possibly =0) */
         break;
 
 /* RS      15      Restore Saved Line.                                */
@@ -672,8 +639,8 @@ void Interp(user_context_t *user) {
 /* does not correspond to a line in the BASIC program an error stop   */
 /* occurs. An error stop also results from stack underflow.           */
       case 21:
-        Lino = PopSub();         /* get line # (possibly =0) from pop */
-        if (ILPC != 0) GoToLino() ;             /* stops run if error */
+        Lino = PopSub(user);     /* get line # (possibly =0) from pop */
+        if (ILPC != 0) GoToLino(user) ;         /* stops run if error */
         break;
 
 /* GO      16      GOTO.                                              */
@@ -686,17 +653,17 @@ void Interp(user_context_t *user) {
 /* non-existent BASIC line result in error stops.                     */
       case 22:
         ILPC = XQhere;                /* the IL assumes an implied NX */
-        if (DEBUGON>0) LogIt(-ILPC);
-        Lino = PopExInt();
-        if (ILPC != 0) GoToLino() ;             /* stops run if error */
+        if (DEBUGON>0) LogIt(user,-ILPC);
+        Lino = PopExInt(user);
+        if (ILPC != 0) GoToLino(user) ;             /* stops run if error */
         break;
 
 /* NE      17      Negate (two's complement).                         */
 /*                 The number in the top two bytes of the expression  */
 /* stack is replaced with its negative.                               */
       case 23:
-        ix = PopExInt();
-        if (ILPC != 0) PushExInt(-ix);
+        ix = PopExInt(user);
+        if (ILPC != 0) PushExInt(user,-ix);
         break;
 
 /* AD      18      Add.                                               */
@@ -704,9 +671,9 @@ void Interp(user_context_t *user) {
 /* bytes of the expression stack, and replace them with the two-byte  */
 /* sum. Stack underflow results in an error stop.                     */
       case 24:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op+ix);
+        ix = PopExInt(user);
+        op = PopExInt(user);
+        if (ILPC != 0) PushExInt(user,op+ix);
         break;
 
 /* SU      19      Subtract.                                          */
@@ -714,9 +681,9 @@ void Interp(user_context_t *user) {
 /* expression stack from the next two bytes and replace the 4 bytes   */
 /* with the two-byte difference.                                      */
       case 25:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op-ix);
+        ix = PopExInt(user);
+        op = PopExInt(user);
+        if (ILPC != 0) PushExInt(user,op-ix);
         break;
 
 /* MP      1A      Multiply.                                          */
@@ -724,9 +691,9 @@ void Interp(user_context_t *user) {
 /* bytes of the computational stack, and replace them with the least  */
 /* significant 16 bits of the product. Stack underflow is possible.   */
       case 26:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ILPC != 0) PushExInt(op*ix);
+        ix = PopExInt(user);
+        op = PopExInt(user);
+        if (ILPC != 0) PushExInt(user,op*ix);
         break;
 
 /* DV      1B      Divide.                                            */
@@ -737,10 +704,10 @@ void Interp(user_context_t *user) {
 /* signed integer quotient. Stack underflow or attempted division by  */
 /* zero result in an error stop. */
       case 27:
-        ix = PopExInt();
-        op = PopExInt();
-        if (ix == 0) TBerror();                      /* divide by 0.. */
-        else if (ILPC != 0) PushExInt(op/ix);
+        ix = PopExInt(user);
+        op = PopExInt(user);
+        if (ix == 0) TBerror(user);                      /* divide by 0.. */
+        else if (ILPC != 0) PushExInt(user,op/ix);
         break;
 
 /* CP      1C      Compare.                                           */
@@ -765,15 +732,15 @@ void Interp(user_context_t *user) {
 /* force no skip. The other 5 bits of the control byte are ignored.   */
 /* Stack underflow results in an error stop.                          */
       case 28:
-        ix = PopExInt();
-        op = PopExBy();
-        ix = PopExInt()-ix;                         /* <0 or =0 or >0 */
+        ix = PopExInt(user);
+        op = PopExBy(user);
+        ix = PopExInt(user)-ix;                         /* <0 or =0 or >0 */
         if (ILPC == 0) return;                         /* underflow.. */
         if (ix<0) ix = 1;
         else if (ix>0) ix = 4;              /* choose the bit to test */
           else ix = 2;
         if ((ix&op)>0) ILPC++;           /* skip next IL op if bit =1 */
-          if (Debugging>0) ShowExSt();
+          if (Debugging>0) ShowExSt(user);
         break;
 
 /* NX      1D      Next BASIC Statement.                              */
@@ -789,16 +756,16 @@ void Interp(user_context_t *user) {
       case 29:
         if (Lino == 0) ILPC = 0;
         else {
-          BP = SkipTo(BP, '\r');          /* skip to end of this line */
-          Lino = Peek2(BP++);                           /* get line # */
+          BP = SkipTo(user,BP, '\r');          /* skip to end of this line */
+          Lino = Peek2(user,BP++);                           /* get line # */
           if (Lino==0) {                           /* ran off the end */
-            TBerror();
+            TBerror(user);
             break;}
           else BP++;
           ILPC = XQhere;          /* restart at saved IL address (XQ) */
-          if (DEBUGON>0) LogIt(-ILPC);}
-        if (DEBUGON>0) LogIt(Lino);
-        if (Debugging>0) {OutStr(" [#"); OutInt(Lino); OutStr("]");}
+          if (DEBUGON>0) LogIt(user,-ILPC);}
+        if (DEBUGON>0) LogIt(user,Lino);
+        if (Debugging>0) {OutStr(user," [#"); OutInt(user,Lino); OutStr(user,"]");}
         break;
 
 /* LS      1F      List The Program.                                  */
@@ -818,9 +785,9 @@ void Interp(user_context_t *user) {
         ix = 0;          /* The IL seems to assume we can handle zero */
         while (ExpnTop<ExpnStk) {   /* or more numbers, so get them.. */
           op = ix;
-          ix = PopExInt();}       /* get final line #, then initial.. */
-        if (op<0 || ix<0) TBerror();
-          else ListIt(ix,op);
+          ix = PopExInt(user);}       /* get final line #, then initial.. */
+        if (op<0 || ix<0) TBerror(user);
+          else ListIt(user,ix,op);
         break;
 
 /* PN      20      Print Number.                                      */
@@ -829,8 +796,8 @@ void Interp(user_context_t *user) {
 /* suppression. If it is negative, it is preceded by a minus sign     */
 /* and the magnitude is printed. Stack underflow is possible.         */
       case 32:
-        ix = PopExInt();
-        if (ILPC != 0) OutInt(ix);
+        ix = PopExInt(user);
+        if (ILPC != 0) OutInt(user,ix);
         break;
 
 /* PQ      21      Print BASIC String.                                */
@@ -842,11 +809,57 @@ void Interp(user_context_t *user) {
       case 33:
         while (true) {
           ch = (char)Core[BP++];
-          if (ch=='\"') break;                 /* done on final quote */
-          if (ch<' ') {      /* error if return or other control char */
-            TBerror();
-            break;}
-          Ouch(ch);}                                      /* print it */
+          if (ch=='\"') break;      // done on final quote
+
+          if (ch<' ') {             // error if return or other control char
+            TBerror(user);
+            break;
+          }
+
+          if(ch == '\\') {          // check if it is a back slash
+            ch = (char)Core[BP++];  // get the next character
+            switch(ch) {
+                case '\\':         // if it is a \ then just print it
+                case '"':
+                case '\'':
+                  break;
+                case 'e':
+                  ch = '\e';
+                  break;
+                case 'n':
+                  ch = '\n';
+                  break;
+                case 'r':
+                  ch = '\r';
+                  break;
+                case 't':
+                  ch = '\t';
+                  break;;
+                case 'b':
+                  ch = '\b';
+                  break;
+                case 'a':
+                  ch = '\a';
+                  break;
+                case 'x':                     // support any other value as hex
+                  char hexbuf[10];
+                  int  hexvalue;
+                  ch = (char)Core[BP++];
+                  if(ch!='\"') {
+                      hexbuf[0]=ch; hexbuf[1] = '\0';
+                      ch = (char)Core[BP++];
+                      if(ch != '\"' ){
+                        hexbuf[1] = ch; hexbuf[2] = '\0';
+                      }
+                  }
+                
+                  sscanf(hexbuf,"%2x",&hexvalue);
+                  ch = hexvalue;
+                  break;
+            }
+          }
+          Ouch(user,ch);
+        }                                      /* print it */
         break;
 
 /* PT      22      Print Tab.                                         */
@@ -854,27 +867,68 @@ void Interp(user_context_t *user) {
 /* the next multiple of eight character positions (from the left      */
 /* margin).                                                           */
       case 34:
-        do {Ouch(' ');} while (Core[TabHere]%8>0);
+        do {Ouch(user,' ');} while (Core[TabHere]%8>0);
         break;
 
 /* NL      23      New Line.                                          */
 /*                 Output a carriage-return-linefeed sequence to the  */
 /* console.                                                           */
       case 35:
-        Ouch('\r');
-        SwitchUser = true;             // after printing we need to wait for it to be sent
+        Ouch(user,'\r');
+        SwitchUser = true;    // after printing we need to wait for it to be sent
         break;
 
 /* PC "xxxx"  24xxxxxxXx   Print Literal String.                      */
 /*                         The ASCII string follows opcode and its    */
 /* last byte has the most significant bit set to one.                 */
       case 36:
-        //printf("Print a string\n\r");
         do {
           ix = (int)Core[ILPC++];
-          Ouch((char)(ix&127));          /* strip high bit for output */
-          } while ((ix&128)==0);
-          SwitchUser = true;             // after printing we need to wait for it to be sent
+          if((ix&127) == '\\') {          // check for string escape seqence
+            if(ix&128!=0) {
+              ix = (int)Core[ILPC++];       // get the escaped character
+              switch(ix&127) {
+                case '\\':                 // if it is a \ then just print it
+                case '"':
+                case '\'':
+                  break;
+                case 'e':
+                  ix = '\e';
+                  break;
+                case 'n':
+                  ix = '\n';
+                  break;
+                case 'r':
+                  ix = '\r';
+                  break;
+                case 't':
+                  ix = '\t';
+                  break;;
+                case 'b':
+                  ix = '\b';
+                  break;
+                case 'a':
+                  ix = '\a';
+                  break;
+                case 'x':                     // support any other value as hex
+                  char hexbuf[10];
+                  int  hexvalue;
+                  ix = (int)Core[ILPC++];       // get the char 1
+                  hexbuf[0]=ix&127; hexbuf[1] = '\0';
+                  if(ix&128 == 0){
+                    ix = (int)Core[ILPC++];       // get the char 1
+                    hexbuf[1] = ix&127; hexbuf[2] = '\0';
+                  }
+                  sscanf(hexbuf,"%2x",&hexvalue);
+                  break;
+              }
+            }
+            if(user->echo) Ouch(user,ix);
+          } else {
+            if(user->echo) Ouch(user,(char)(ix&127));          // strip high bit for output 
+          }
+        } while ((ix&128)==0);
+        SwitchUser = true;                // after printing we need to wait for it to be sent
         break;
 
 /* GL      27      Get Input Line.                                    */
@@ -886,8 +940,8 @@ void Interp(user_context_t *user) {
 /* character in the input line buffer, and a carriage-return-linefeed */
 /* sequence is [not] output.                                          */
       case 39:
-        if(CurrentUser->i_inFile == NULL && !user_line_available(CurrentUser)) {  // if there is not a complete line to read wait for one
-          CurrentUser->WaitingRead = io_waiting;
+        if(user->i_inFile == NULL && !user_line_available(user)) {  // if there is not a complete line to read wait for one
+          user->WaitingRead = io_waiting;
           ILPC--;
           SwitchUser = true;
           continue;
@@ -895,7 +949,8 @@ void Interp(user_context_t *user) {
 
         InLend = InLine;
         while (true) {               /* read input line characters... */
-          ch = Inch();
+          ch = Inch(user); 
+          //printf("%2X(%c)",ch,isprint(ch) ? ch:'~');                             // debugmod
           if (ch=='\r') break;                     /* end of the line */
           else if (ch=='\t') {
             Debugging = (Debugging+DEBUGON)&1;  /* maybe toggle debug */
@@ -903,11 +958,11 @@ void Interp(user_context_t *user) {
           else if (ch==(char)Core[BScode]) {        /* backspace code */
             if (InLend>InLine) InLend--;    /* assume console already */
             else {   /* backing up over front of line: just kill it.. */
-              Ouch('\r');
+              Ouch(user,'\r');
               break;}}
           else if (ch==(char)Core[CanCode]) {     /* cancel this line */
             InLend = InLine;
-            Ouch('\r');                /* also start a new input line */
+            Ouch(user,'\r');                /* also start a new input line */
             break;}
           else if (ch<' ') continue;   /* ignore non-ASCII & controls */
           else if (ch>'~') continue;
@@ -920,6 +975,11 @@ void Interp(user_context_t *user) {
         Core[InLend++] = (aByte) '\r';  /* insert final return & null */
         Core[InLend] = 0;
         BP = InLine;
+        // see if we can use an alias
+        if(strncasecmp(&Core[InLine],"BYE\r",strlen(&Core[InLine]))==0) {
+          strcpy(&Core[InLine],"PRUSR(269)\r");
+          InLend = InLine + 11;   // in know replace sucks
+        }
         break;
 
 /* IL      2A      Insert BASIC Line.                                 */
@@ -942,9 +1002,9 @@ void Interp(user_context_t *user) {
 /* restarted in the command mode.                                     */
       case 42:
 
-        Lino = PopExInt();                              /* get line # */
+        Lino = PopExInt(user);                              /* get line # */
         if (Lino <= 0) {          /* don't insert line #0 or negative */
-          if (ILPC != 0) TBerror();
+          if (ILPC != 0) TBerror(user);
             else return;
           break;
         }
@@ -958,12 +1018,12 @@ void Interp(user_context_t *user) {
         //printf("BP=%d, InLend=%d, inssert len(ix)=%d",BP,InLend,ix);
         //ShoMemDump(BP,100);
 
-        op = 0;         /* this will be the number of bytes to delete */
+        op = 0;                             /* this will be the number of bytes to delete */
 
-        chpt = FindLine(Lino);              /* try to find this line..  or return the next higher line*/
+        chpt = FindLine(user,Lino);              /* try to find this line..  or return the next higher line*/
 
-        if (Peek2(chpt) == Lino)            /* there is a line to delete.. */
-          op = (SkipTo(chpt+2, '\r')-chpt); // find the end of line, \r is used as delimiter
+        if (Peek2(user,chpt) == Lino)            /* there is a line to delete.. */
+          op = (SkipTo(user,chpt+2, '\r')-chpt); // find the end of line, \r is used as delimiter
 
         //printf("Line to delete(op) %d",op);
 
@@ -977,7 +1037,7 @@ void Interp(user_context_t *user) {
         //printf(",Add or delete(op) %d\n",op);
 
         if (SrcEnd+op>=SubStk) {                         /* too big.. */
-          TBerror();
+          TBerror(user);
           break;
         }
         //printf("SrcEnd=%d, SrcEnd+op=%d, chpt=%d, ix=%d, chpt+ix=%d\n",SrcEnd,SrcEnd+op,chpt, ix,chpt+ix);
@@ -1002,7 +1062,7 @@ void Interp(user_context_t *user) {
         //  printf("Shift left after\n"); ShoMemDump(Peek2(UserProg),200);
         }
 
-        if (ix>0) Poke2(chpt++,Lino);        /* insert the new line # */
+        if (ix>0) Poke2(user,chpt++,Lino);        /* insert the new line # */
         int start = chpt;
         while (ix>2) {                       /* insert the new line.. */
           Core[++chpt] = Core[BP++];
@@ -1011,11 +1071,11 @@ void Interp(user_context_t *user) {
        // printf("After New line added\n");
        // ShoMemDump(Peek2(UserProg),200);
 
-        Poke2(EndProg,SrcEnd);
+        Poke2(user,EndProg,SrcEnd);
 
         ILPC = 0;
         Lino = 0;
-          if (Debugging>0) ListIt(0,0);
+          if (Debugging>0) ListIt(user,0,0);
         break;
 
 /* MT      2B      Mark the BASIC program space Empty.                */
@@ -1025,8 +1085,8 @@ void Interp(user_context_t *user) {
 /* program space, and the line number of the first line is set to 0,  */
 /* which is the indication of the end of the program.                 */
       case 43:
-        ColdStart(CurrentUser);
-          if (Debugging>0) {ShowSubs(); ShowExSt(); ShowVars(0);}
+        ColdStart(user);
+          if (Debugging>0) {ShowSubs(user); ShowExSt(user); ShowVars(user,0);}
         break;
 
 /* XQ      2C      Execute.                                           */
@@ -1038,12 +1098,12 @@ void Interp(user_context_t *user) {
 /* the first execution of a NX instruction.                           */
       case 44:
         XQhere = ILPC;
-        BP = Peek2(UserProg);
-        Lino = Peek2(BP++);
+        BP = Peek2(user,UserProg);
+        Lino = Peek2(user,BP++);
         BP++;
-        if (Lino == 0) TBerror();
+        if (Lino == 0) TBerror(user);
         else if (Debugging>0)
-          {OutStr(" [#"); OutInt(Lino); OutStr("]");}
+          {OutStr(user," [#"); OutInt(user,Lino); OutStr(user,"]");}
         break;
 
 /* WS      2D      Stop.                                              */
@@ -1052,14 +1112,14 @@ void Interp(user_context_t *user) {
 /* is also vacated by this instruction. This instruction effectively  */
 /* jumps to the Warm Start entry of the ML interpreter.               */
       case 45:
-        WarmStart(CurrentUser);
-        if(CurrentUser->ExitWhenDone) {
-          CurrentUser->level = user_shell;
-          CurrentUser->ExitWhenDone = false;
+        WarmStart(user);
+        if(user->ExitWhenDone) {
+          user->level = user_shell;
+          user->ExitWhenDone = false;
           SwitchUser = true;
           continue;
         }
-        if (Debugging>0) ShowSubs();
+        if (Debugging>0) ShowSubs(user);
         break;
 
 /* US      2E      Machine Language Subroutine Call.                  */
@@ -1072,21 +1132,21 @@ void Interp(user_context_t *user) {
 /* result returned by the subroutine. Stack underflow results in an   */
 /* error stop.                                                        */
       case 46:
-        Poke2(LinoCore,Lino);    /* bring these memory locations up.. */
-        Poke2(ILPCcore,ILPC);      /* ..to date, in case user looks.. */
-        Poke2(BPcore,BP);
-        Poke2(SvPtCore,SvPt);
-        ix = PopExInt()&0xFFFF;                            /* datum A */
-        here = PopExInt()&0xFFFF;                          /* datum X */
-        op = PopExInt()&0xFFFF;            /* nominal machine address */
+        Poke2(user,LinoCore,Lino);    /* bring these memory locations up.. */
+        Poke2(user,ILPCcore,ILPC);      /* ..to date, in case user looks.. */
+        Poke2(user,BPcore,BP);
+        Poke2(user,SvPtCore,SvPt);
+        ix = PopExInt(user)&0xFFFF;                            /* datum A */
+        here = PopExInt(user)&0xFFFF;                          /* datum X */
+        op = PopExInt(user)&0xFFFF;            /* nominal machine address */
         if (ILPC == 0) break;              /* in immediate mode/command mode*/
 
-        if (op>=Peek2(ILfront) && op<ILend) { /* call IL subroutine.. */
-          PushExInt(here);
-          PushExInt(ix);
-          PushSub(ILPC);                      /* push return location */
+        if (op>=Peek2(user,ILfront) && op<ILend) { /* call IL subroutine.. */
+          PushExInt(user,here);
+          PushExInt(user,ix);
+          PushSub(user,ILPC);                      /* push return location */
           ILPC = op;
-          if (DEBUGON>0) LogIt(-ILPC);
+          if (DEBUGON>0) LogIt(user,-ILPC);
           break;}
         switch (op) {
         case WachPoint:    /* we only do a few predefined functions.. */
@@ -1094,59 +1154,59 @@ void Interp(user_context_t *user) {
           if (ix>32767) ix = -(int)Core[here]-256;
           Watchee = ix;
           if (Debugging>0) {
-            OutLn(); OutStr("[** Watch "); OutHex(here,4); OutStr("]");}
-          PushExInt((int)Core[here]);
+            OutLn(user); OutStr(user,"[** Watch "); OutHex(user,here,4); OutStr(user,"]");}
+          PushExInt(user,(int)Core[here]);
           break;
         case ColdGo:
-          ColdStart(CurrentUser);
+          ColdStart(user);
           break;
         case WarmGo:
-          WarmStart(CurrentUser);
+          WarmStart(user);
           break;
         case InchSub:
-          if(!user_char_available(CurrentUser)) { // we have to suspend it if no input available
+          if(!user_char_available(user)) { // we have to suspend it if no input available
             ILPC--;                  // backup the execution to repeat this call
             SwitchUser = true;       // tell the interpreter to wait till io is available
             continue;                // this should force a suspend of the execution
           }
-          PushExInt((int)Inch());
+          PushExInt(user,(int)Inch(user));
           break;
         case OutchSub:
-          Ouch((char)(ix&127));
-          PushExInt(0);
+          Ouch(user,(char)(ix&127));
+          PushExInt(user,0);
           break;
         case BreakSub:
-          PushExInt(StopIt());
+          PushExInt(user,StopIt(user));
           break;
         case PeekSub:
-          PushExInt((int)Core[here]);
+          PushExInt(user,(int)Core[here]);
           break;
         case Peek2Sub:
-          PushExInt(Peek2(here));
+          PushExInt(user,Peek2(user,here));
           break;
         case PokeSub:
           ix = ix&0xFF;
           Core[here] = (aByte)ix;
-          PushExInt(ix);
-          if (DEBUGON>0) LogIt(((ix+256)<<16)+here);
-          Lino = Peek2(LinoCore);         /* restore these pointers.. */
-          ILPC = Peek2(ILPCcore);    /* ..in case user changed them.. */
-          BP = Peek2(BPcore);
-          SvPt = Peek2(SvPtCore);
+          PushExInt(user,ix);
+          if (DEBUGON>0) LogIt(user,((ix+256)<<16)+here);
+          Lino = Peek2(user,LinoCore);         /* restore these pointers.. */
+          ILPC = Peek2(user,ILPCcore);    /* ..in case user changed them.. */
+          BP = Peek2(user,BPcore);
+          SvPt = Peek2(user,SvPtCore);
           break;
         case DumpSub:
-          ShoMemDump(here,ix);
-          PushExInt(here+ix);
+          ShoMemDump(user,here,ix);
+          PushExInt(user,here+ix);
           break;
         case TrLogSub:
-          ShowLog();
-          PushExInt(LogHere);
+          ShowLog(user);
+          PushExInt(user,LogHere);
           break;
         case ExitBasic:
-           DoExitBasic(CurrentUser);
+           DoExitBasic(user);
            continue;
   
-        default: TBerror();}
+        default: TBerror(user);}
         break;
 
 /* RT      2F      IL Subroutine Return.                              */
@@ -1154,11 +1214,11 @@ void Interp(user_context_t *user) {
 /* of the next IL instruction. An error stop occurs if the entire     */
 /* control stack (IL and BASIC) is empty.                             */
       case 47:
-        ix = PopSub();                         /* get return from pop */
-        if (ix<Peek2(ILfront) || ix>=ILend) TBerror();
+        ix = PopSub(user);                         /* get return from pop */
+        if (ix<Peek2(user,ILfront) || ix>=ILend) TBerror(user);
         else if (ILPC != 0) {
           ILPC = ix;
-          if (DEBUGON>0) LogIt(-ILPC);}
+          if (DEBUGON>0) LogIt(user,-ILPC);}
         break;
 
 /* JS a    3000-37FF       IL Subroutine Call.                        */
@@ -1168,10 +1228,10 @@ void Interp(user_context_t *user) {
 /* of the IL program counter are pushed onto the IL region of the     */
 /* control stack. Stack overflow results in an error stop.            */
       case 48: case 49: case 50: case 51: case 52: case 53: case 54: case 55:
-        PushSub(ILPC+1);                /* push return location there */
+        PushSub(user,ILPC+1);                /* push return location there */
         if (ILPC == 0) break;
-        ILPC = (Peek2(ILPC-1)&0x7FF)+Peek2(ILfront);
-        if (DEBUGON>0) LogIt(-ILPC);
+        ILPC = (Peek2(user,ILPC-1)&0x7FF)+Peek2(user,ILfront);
+        if (DEBUGON>0) LogIt(user,-ILPC);
         break;
 
 /* J a     3800-3FFF       Jump.                                      */
@@ -1180,8 +1240,8 @@ void Interp(user_context_t *user) {
 /* the address of the next IL instruction. The previous contents of   */
 /* the IL program counter is lost. */
       case 56: case 57: case 58: case 59: case 60: case 61: case 62: case 63:
-        ILPC = (Peek2(ILPC-1)&0x7FF)+Peek2(ILfront);
-        if (DEBUGON>0) LogIt(-ILPC);
+        ILPC = (Peek2(user,ILPC-1)&0x7FF)+Peek2(user,ILfront);
+        if (DEBUGON>0) LogIt(user,-ILPC);
         break;
 
 /* NO      08      No Operation.                                      */
@@ -1200,7 +1260,7 @@ void Interp(user_context_t *user) {
 /* branch operation is unconditional.                                 */
       case 2: case 3:
         ILPC = ILPC+op-96;
-        if (DEBUGON>0) LogIt(-ILPC);
+        if (DEBUGON>0) LogIt(user,-ILPC);
         break;
 
 /* BC a "xxx"   80xxxxXx-9FxxxxXx  String Match Branch.               */
@@ -1227,10 +1287,10 @@ void Interp(user_context_t *user) {
           ix = (int)Core[ILPC++];
           if (((char)(ix&127)) != DeCaps[((int)Core[BP++])&127]) {
             BP = chpt;         /* back up to front of string in Basic */
-            if (here==0) TBerror();
+            if (here==0) TBerror(user);
               else ILPC = here;                 /* jump forward in IL */
             break;}}
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
+        if (DEBUGON>0) if (ILPC>0) LogIt(user,-ILPC);
         break;
 
 /* BV a    A0-BF   Branch if Not Variable.                            */
@@ -1246,10 +1306,10 @@ void Interp(user_context_t *user) {
         while (((char)Core[BP]) == ' ') BP++;     /* skip over spaces */
         ch = (char)Core[BP];
         if (ch >= 'A' && ch <= 'Z' || ch >= 'a' && ch <= 'z')
-          PushExBy((((int)Core[BP++])&0x5F)*2);
-        else if (op==160) TBerror();           /* error if not letter */
+          PushExBy(user,(((int)Core[BP++])&0x5F)*2);
+        else if (op==160) TBerror(user);           /* error if not letter */
           else ILPC = ILPC+op-160;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
+        if (DEBUGON>0) if (ILPC>0) LogIt(user,-ILPC);
         break;
 
 /* BN a    C0-DF   Branch if Not a Number.                            */
@@ -1273,10 +1333,10 @@ void Interp(user_context_t *user) {
             if (here<48 || here>57) break;     /* not a decimal digit */
             op = op*10+here-48;}                 /* insert into value */
           BP--;                             /* back up over non-digit */
-          PushExInt(op);}
-        else if (op==192) TBerror();             /* error if no digit */
+          PushExInt(user,op);}
+        else if (op==192) TBerror(user);             /* error if no digit */
           else ILPC = ILPC+op-192;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
+        if (DEBUGON>0) if (ILPC>0) LogIt(user,-ILPC);
         break;
 
 /* BE a    E0-FF   Branch if Not Endline.                             */
@@ -1294,9 +1354,9 @@ void Interp(user_context_t *user) {
       case 7:
         while (((char)Core[BP]) == ' ') BP++;     /* skip over spaces */
         if (((char)Core[BP]) == '\r') ;
-        else if (op==224) TBerror();            /* error if no offset */
+        else if (op==224) TBerror(user);            /* error if no offset */
           else ILPC = ILPC+op-224;
-        if (DEBUGON>0) if (ILPC>0) LogIt(-ILPC);
+        if (DEBUGON>0) if (ILPC>0) LogIt(user,-ILPC);
         break;
       }
     }
@@ -1588,7 +1648,7 @@ void StartTinyBasic(char* ILtext) {
 
   ConvtIL(ILtext);                                    // convert IL assembly code to binary
 
-  ColdStart(CurrentUser);
+  ColdStart(user);
   //Interp();                                           // go do it
   //if (oFile != NULL) IoFileClose(oFile);              // close output file
   //if (inFile != NULL) IoFileClose(inFile);            // close input file
@@ -1612,13 +1672,13 @@ void UserInitTinyBasic(user_context_t *user, char * ILtext) {
   int nx;
 
   if(user->BasicInitComplete) return;                       // already done
-  user->i_Core = (aByte *)calloc(1,user->MemorySize); // allocate memory for interpreter core
+  user->i_Core = (aByte *)calloc(1,user->MemorySize);       // allocate memory for interpreter core
   if (!user->i_Core) {
       user_write(user, "TinyBasic: Unable to allocate memory for interpreter core.\n");
       return;
   }
   //for (nx=0; nx<CoreTop; nx++) user->i_Core[nx] = 0;        // clear Core.. not required as calloc does it
-  user_Poke2(user,ExpnStk,8191);                              // random number seed
+  Poke2(user,ExpnStk,8191);                                   // random number seed
   user->i_Core[BScode] = 0x7f;                                // backspace
   user->i_Core[CanCode] = 27;                                 // escape
   if (ILtext == NULL) ILtext = DefaultIL();                   // no IL given, use mine

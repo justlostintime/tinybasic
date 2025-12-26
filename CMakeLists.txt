@@ -22,6 +22,7 @@ set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
 if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
+
 # ====================================================================================
 set(PICO_BOARD pico2_w CACHE STRING "Board type")
 
@@ -51,6 +52,7 @@ pico_enable_stdio_usb(tinybasic 1)
 target_link_libraries(tinybasic
         pico_multicore
         pico_stdlib
+        pico_sha256
         )
 
 # Add the standard include files to the build

@@ -13,6 +13,10 @@
 #include "hw_config.h"
 #include "sd_card.h"
 #include "user.h"
+#include "telnetserver.h"
+
+   // incantation to switch from line mode to character mode
+   const uint8_t toLineModeMagic[] = {IAC,WILL,SUP_GA,IAC,WONT,ECHO,IAC,WILL,LINEMODE};
 
 int init_telnet_server(char *ssid, char *password)
 {
@@ -44,7 +48,7 @@ int init_telnet_server(char *ssid, char *password)
         printf("root TCP init failed\n");
     // } else {
     //    printf("Starting root TCP server\n");
-    return 1;
+    return -1;
     }
 
     if (!tcp_server_open(user)) {
@@ -54,4 +58,8 @@ int init_telnet_server(char *ssid, char *password)
     //    printf("root TCP server open succeeded\n");
     }
     return 0;
+}
+
+void Client_echo_request(user_context_t * user) {
+    tcp_server_send_msg_len(user,(char *)toLineModeMagic,sizeof(toLineModeMagic));
 }
