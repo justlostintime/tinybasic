@@ -15,36 +15,44 @@
 #include "f_util.h"
 #include "hw_config.h"
 #include "sd_card.h"
+#include "user_datatypes.h"
 #include "user.h"
 #include "FileSystem.h"
 #include "interpreter.h"
 #include "debug_user.h"
+#include "terminal.h"
 
 #define multicore_basic 1
 
 // define the length of time basic is given before giving up control
-#define TIME_SLICE 50
+#define TIME_SLICE 100
 
 extern char __StackLimit, __bss_end__;
 
 extern bool SwitchUser;
 extern user_context_t *NewUsers;            // new users to be added to user list
 extern user_context_t *RootUser;            // Pointer to the root user
-extern user_context_t *DebugUser;           // Pointer to the debug user
+extern user_context_t *DebugUser;           // Pointer to the debug user        
+extern queue_t basic_queue;                  // core 1 running basic programs
 
 extern semaphore_t user_list_sema;          // protect the user list against bad things
 extern semaphore_t new_user_list_sema;      // protect the user list against bad things
 
+uint64_t Process_time_core0 = 0;            // the total process time used by core 0 ms
+uint64_t Process_time_core1 = 0;            // the total process time used by core 1 ms
+char *tinybasicIL = NULL;                   // pointer to the tinybasic IL code
+
 const char * Greeting = "Welcome to TinyBasic 1.0 Timeshare server\n\rlogon format 'name:password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rLog in : ";
 const char * UserLogin = "Log in : ";
 const char * UserPrompt = " > ";
-uint64_t timerStart, timerIdle, idleStart;
 bool display_who = false;
 
-void init_telnet_server(char *sid, char *password);
+user_context_t *core1_user;                 // current shell user
+user_context_t *core0_user;                 // current basic user
 
 // Root LED state
 bool root_led_on = true;
+
 
 // LED control function
 void pico_set_led(bool led_on) {
@@ -64,11 +72,49 @@ void user_being_removed(user_context_t *user) {
         user->state.client_pcb = NULL;
     }
 }   
+
+void Core_1_dipatcher() {
+
+    user_context_t *user;
+    active_fifo_t fifo_entry;
+    uint64_t timerStart;
+
+    while(true) {
+        queue_remove_blocking(&basic_queue, &fifo_entry);
+        if(fifo_entry.user->WaitingRead==io_waiting) {          // because of timing issues with other core
+           queue_add_blocking(&basic_queue, &fifo_entry);       // go back and wait for nexted queued program
+           continue;
+        }
+
+        user = fifo_entry.user;
+        core1_user = user;
+        timerStart = get_absolute_time();
+
+        Interp(user);                                           // go do it
+
+        core1_user = NULL;
+        
+        uint64_t total = to_ms_since_boot(get_absolute_time()-timerStart);
+        user->active_time_used += total;
+        Process_time_core1 += total;
+
+        switch(user->level) {
+
+            case user_shell: // we get here when basic exits
+                user->level = user_needs_prompt;
+                user->running = false;
+                break;
+
+            case user_basic:  // requeue if busy, otherwise just continu
+                queue_add_blocking(&basic_queue, &fifo_entry);
+        }
+    }
+}
    
 void main_user_loop() {
-    timerIdle = 0;
+    uint64_t timerStart;
+    active_fifo_t fifo_entry;
     while(true) {
-        idleStart = to_ms_since_boot(get_absolute_time());
         user_context_t *user;
         if(NewUsers){
             //printf("Transfering user(s) from waiting to active:\n");
@@ -86,6 +132,12 @@ void main_user_loop() {
         user = get_user_list();
 
         while(user){
+
+            if(user->display_who) {         // always immediate response
+                user_who(user);
+                user->display_who = false;
+            }
+
             switch(user->level) {
                 case user_new_connect:
                     if(user->state.client_pcb) {
@@ -99,6 +151,10 @@ void main_user_loop() {
                     {
                         user_context_t *new_user;
                         if(user->WaitingRead == io_complete) {      // we have something to proceess
+                           // printf("Login attempt from client %s port %d id %8X\n",
+                           //        ip4addr_ntoa(&user->state.client_pcb->remote_ip),
+                           //        user->state.client_pcb->remote_port,
+                           //        user->state.client_pcb);
                             new_user = login_user(user);
                             if(new_user)  {
                                 debugger_message(new_user,"Logged in");
@@ -113,7 +169,10 @@ void main_user_loop() {
                                         user->level=user_removed;
                                     }
                                 }
+
+                                terminal_init(user,0,0);                            // get the initial size of the terminal
                                 user_write(user,(char *)UserPrompt);
+
                             } else {
                                 user_write(user,(char *)UserLogin);
                             }
@@ -122,11 +181,22 @@ void main_user_loop() {
                     }
                     break;
 
+                case user_needs_prompt:                   // this is set when the user is leaving the basic interpreter
+                    user_write(user,(char *)UserPrompt);
+                    user->WaitingRead = io_waiting;
+                    user->level = user_shell;
+                    break;
+
                 case user_shell:
                     if(user->WaitingRead == io_complete) { // we have something to proceess
-                        timerStart = to_ms_since_boot(get_absolute_time());
+                        timerStart = get_absolute_time();
+                        core0_user = user;
                         userShell(user);
-                        user->active_time_used += (to_ms_since_boot(get_absolute_time()) - timerStart);
+                        core0_user = NULL;
+                        uint64_t total = (to_ms_since_boot(get_absolute_time() - timerStart));
+                        user->active_time_used += total;
+                        Process_time_core0 += total;
+
                         if (user->level == user_shell) {
                             user_write(user,(char *)UserPrompt);
                             user->WaitingRead = io_waiting;
@@ -135,18 +205,14 @@ void main_user_loop() {
                     break;
 
                 case user_basic:
-
-                        if(!user->BasicInitComplete) {
-                            UserInitTinyBasic(user,(char *)0);
-                        }
-
-                        timerStart = to_ms_since_boot(get_absolute_time());
-                        RunTinyBasic(user);
-                        user->active_time_used += to_ms_since_boot(get_absolute_time()) - timerStart;
-
-                        if(user->level==user_shell) {
-                            user_write(user,(char *)UserPrompt);
-                            user->WaitingRead = io_waiting;
+                        if(user->running) {
+                            break;
+                        } else { 
+                            if(!user->BasicInitComplete) UserInitTinyBasic(user,tinybasicIL);
+                            user->running = true;
+                            fifo_entry.user = user;
+                            // printf("Enqueue  not waiting or running");
+                            queue_add_blocking(&basic_queue,&fifo_entry);
                         }
                     break;
 
@@ -156,20 +222,12 @@ void main_user_loop() {
                     continue;
 
                 default:
-                   debugger_message(user,"Unknown User state");
+                   debugger_message(user,"Unknown User states");
                    user->level = user_removed;
             }
             user = user->next;
         }
-        timerIdle += (to_ms_since_boot(get_absolute_time()) - idleStart);
     }
-}
-
-// core 1 main task
-void core1_entry() {
-    printf("Begin using core 1\n");
-    user_write(RootUser,(char *)UserPrompt);   // prompt for root user
-    main_user_loop();
 }
 
 //int64_t alarm_callback(alarm_id_t id, void *user_data) {
@@ -192,46 +250,6 @@ bool alarm_callback(struct repeating_timer *t) {
 bool next_user_callback(struct repeating_timer *t) {
     SwitchUser = true;
 }
-// Process the special commands being passed
-char escape_buffer[10];
-char escape_index;
-bool console_escape_mode = false;
-void process_escape_commands(int16_t value) {
-
-    if(escape_index > sizeof(escape_buffer)-1) {
-        printf("Escape too long sequence recieved : ");
-        console_escape_mode = false;
-        printf("%s\r\n",escape_buffer);
-        return;
-    }
-
-    escape_buffer[escape_index++] = value;
-    escape_buffer[escape_index] = '\0';
-
-    switch(value) {
-        case 'A':               //  up arrow
-        case 'B':               //  down arrow
-        case 'C':               //  right arrow
-        case 'D':               //  left arrow
-        case 'F':               //  end key
-   
-        case '~':               //  most other keys
-                console_escape_mode = false;
-                //printf("Escape Seq : %s\r\n",escape_buffer);
-                break;
-
-        case 'H':               //  home key
-                display_who=true;
-                console_escape_mode = false;
-                break;
-        default:
-                if(!isprint(value)){
-                    printf("Invalid escape sequence character detected %2X %d",value, value);
-                    console_escape_mode = false;
-                    printf("Escape Seq : %s\r\n",escape_buffer);
-                }
-    }
-}
 
 // called when ever there is console data available
 // each byte is placed into the user's line buffer
@@ -239,36 +257,24 @@ void process_escape_commands(int16_t value) {
 void Console_Data_Available(void *param) {
     user_context_t *user = param;
 
-  read_again:
-
     int16_t value = getchar_timeout_us(0);
     if(value == PICO_ERROR_TIMEOUT) {
         //printf("key timeout\n\r");
         return;
     }
 
-    // process special controls if recieved
-    if(value == '\e') {
-        console_escape_mode=true;
-        escape_index=0;
-        goto read_again;
-    }
-   if(console_escape_mode){
-        process_escape_commands(value);
-        goto read_again;
-
-   } else {
+    if(value == '\b' || value == 0x7F) {                    // backspace or delete
+        if(!user_remove_char_from_buffer(user)) return;     // nothing to do if nothing in the buffer
+        user_write(user,"\b \b");                           // erase the character on the console
+        
+    } else {
         //printf("got %2X\n\r",value);
+
         if((value >= 32 && value <= 126) || value == '\r') { // printable characters only
             putchar(value);          // echo to the terminal
             if(value == '\r') putchar( '\n');
-            user_add_char_to_input_buffer(user,value);
-        } else if(value == '\b' || value == 0x7F) {         // backspace or delete
-            if(user->lineIndex == 0) return;            // nothing to do
-            user_write(user,"\b \b");                   // erase the character on the console
-            if(user->lineIndex > 0) user->lineIndex--;  // back up the index
-            user->linebuffer[user->lineIndex] = '\0';   // remove the character
         }
+        user_add_char_to_input_buffer(user,value);          // we must do something now for basic to work;
     }
 }
 
@@ -277,10 +283,16 @@ int main() {
     FIL fil;
 
     long counter = 0;
+    //set_sys_clock_khz(200000, true);
+
     sem_init(&user_list_sema, 1, 1);
     sem_init(&new_user_list_sema, 1, 1);
 
     stdio_init_all();
+
+    // set up the active shell queue for core zero and the active basic queue for core 1
+    // queue_init(&shell_queue,sizeof(active_fifo_t),QueueLength);
+    queue_init(&basic_queue,sizeof(active_fifo_t),QueueLength);
 
     sleep_ms(5000);  // wait for console to start
 
@@ -354,21 +366,15 @@ int main() {
     add_user_to_waiting(DebugUser);
 
     //printf("waiting for users to log in...\n");
-
-    ConfigureTinyBasic();                      // Setup the IL program and DeCaps definitions
+    tinybasicIL = basic_language_config(RootUser);          // setup the basic language configuration
+    ConfigureTinyBasic();                // Setup the IL program and DeCaps definitions
 
     stdio_set_chars_available_callback(Console_Data_Available, RootUser);
 
 #ifdef multicore_basic
-        multicore_launch_core1(core1_entry);
-        while(true){
-            if(display_who) {
-                 user_who(RootUser);
-                 display_who = false;
-            }
-
-            sleep_ms(100);
-        }
+        multicore_launch_core1(Core_1_dipatcher);
+        user_write(RootUser,(char *)UserPrompt);   // prompt for root user
+        main_user_loop();
 #else
         user_write(RootUser,(char *)UserPrompt);   // prompt for root user
         main_user_loop();

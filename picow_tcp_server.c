@@ -16,11 +16,12 @@
 
 #include "tcp_datatypes.h"
 #include "user.h"
+#include "telnetserver.h"
 
 extern char __StackLimit, __bss_end__;
 extern struct tcp_pcb *tcp_active_pcbs;
-
-#define Initial_Root_State  user_shell
+extern queue_t shell_queue;                  // core 0 waiting to run shell commands         
+extern queue_t basic_queue;                  // core 1 running basic programs
 
 user_context_t * tcp_server_init(void) {
     user_context_t *user  =  create_user_context(NULL, NULL,true);
@@ -145,7 +146,7 @@ err_t tcp_server_send_data(void *arg,char *senddata, int len)
     struct tcp_pcb *tpcb = user->state.client_pcb;
     if(tpcb == NULL) return ERR_OK;
 
-   // printf("tcp_server_send_data called to send %ld bytes to client %s port %d id %8X\n", len,
+   //printf("tcp_server_send_data called to send %ld bytes to client %s port %d id %8X\n", len,
    //        ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,tpcb);
 
     int buflen = len;
@@ -173,7 +174,7 @@ err_t tcp_server_send_data(void *arg,char *senddata, int len)
         printf("Failed to write user data Err=%d to %s uid %d\n", err,ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
     } else {
         //printf("Data Written\r\n");
-        user->WaitingWrite = io_waiting;
+        user->WaitingWrite = io_waiting;   // debug mod bg
     }
 
     return err;
@@ -248,7 +249,7 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
 
     // everything now goes through the add character to console buffer
     for(int i = 0; i < state->recv_len; i++) {
-            user_add_char_to_input_buffer(user,state->buffer_recv[i]);
+      user_add_char_to_input_buffer(user,state->buffer_recv[i]);
     }
 
     DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
@@ -302,6 +303,8 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     tcp_recv(client_pcb, tcp_server_recv);
     //tcp_poll(client_pcb, tcp_server_poll, POLL_TIME_S * 2);
     tcp_err(client_pcb, tcp_server_err);
+
+    telnet_no_echo_request(new_user);                        // telnet goto raw mode
 
     // sleep_ms(1);  // delay for now
     // DEBUG_printf(("Connection counter %d\n\r"), tcp_connection_count());

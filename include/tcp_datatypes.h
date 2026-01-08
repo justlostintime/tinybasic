@@ -1,6 +1,6 @@
 #ifndef TCP_DATATYPES_H
 #define TCP_DATATYPES_H
-
+#include "lwip/tcp.h"
 #define TCP_PORT 4242
 #define DEBUG_printf(fmt,...) (void)0
 //#define DEBUG_printf printf

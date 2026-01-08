@@ -15,6 +15,7 @@ FRESULT user_create_directory(user_context_t *user, char *dirname);
 FRESULT user_remove_directory(user_context_t *user, char *dirname);
 FRESULT user_rename_user_file(user_context_t *user, char *sourcefile, char *destfile);
 FRESULT Copy_file(user_context_t *user, const char* source_file, const char* dest_file);
+char *basic_language_config(user_context_t *user);
 
 
 #endif // FILESYSTEM_H

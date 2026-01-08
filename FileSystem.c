@@ -80,7 +80,7 @@ void init_filesys(void) {
     // printf("File system operations complete. Unmounting SD card.........................\n");
     // f_unmount(pSD->pcName);
 }
-
+//__________________________________________________________________________________________________
 int close_filesys(void) {
     sd_card_t *pSD = sd_get_by_num(0);
     FRESULT fr = f_unmount(pSD->pcName); // Unmount the filesystem
@@ -306,4 +306,73 @@ FRESULT Copy_file(user_context_t *user, const char* source_file, const char* des
     }
 
     return fr;
+}
+
+//__________________________________________________________________________________________________
+char *basic_language_config(user_context_t *user) {
+    char prbuf[128], filename[128];
+    FRESULT fr;                 // Result code
+    FIL src_file;               // File objects
+    UINT br;                    // Bytes read, Bytes written
+    const char* source_file = "/system/basic.config";
+    // 1. Open the source file for reading
+    fr = f_open(&src_file, source_file, FA_READ);
+    if (fr != FR_OK) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to open %s: %s %d\n\r", source_file,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        return NULL;
+    }
+    // Read the entire file into a dynamically allocated buffer
+    // First, get the file size
+    FSIZE_t file_size = f_size(&src_file);
+    char *config_data = (char *)malloc(file_size + 1); // +1 for null terminator
+    if (config_data == NULL) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to allocate memory for config data\n\r");
+        user_write(user,prbuf);
+        f_close(&src_file);
+        return NULL;
+    }
+    fr = f_read(&src_file, config_data, file_size, &br);
+    if (fr != FR_OK || br < file_size) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to read %s: %s %d\n\r", source_file,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        free(config_data);
+        f_close(&src_file);
+        return NULL;
+    }
+    config_data[file_size] = '\0'; // Null-terminate the string 
+    f_close(&src_file);
+    sscanf(config_data,"%127s",filename);
+    fr = f_open(&src_file,filename, FA_READ);
+    if (fr != FR_OK) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to open %s: %s %d\n\r", filename,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        free(config_data);
+        return NULL;    
+    }
+    free(config_data);
+    // Read the entire file into a dynamically allocated buffer
+    // First, get the file size
+    file_size = f_size(&src_file);
+    config_data = (char *)malloc(file_size + 1); // +1 for null terminator
+    if (config_data == NULL) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to allocate memory for config data\n\r");
+        user_write(user,prbuf);
+        f_close(&src_file);
+        return NULL;
+    }
+    fr = f_read(&src_file, config_data, file_size, &br);
+    if (fr != FR_OK || br < file_size) {
+        snprintf(prbuf,sizeof(prbuf),"Failed to read %s: %s %d\n\r", filename,FRESULT_str(fr), fr);
+        user_write(user,prbuf);
+        free(config_data);
+        f_close(&src_file);
+        return NULL;
+    }
+    config_data[file_size] = '\0'; // Null-terminate the string
+    f_close(&src_file);
+    snprintf(prbuf,sizeof(prbuf),"Loaded BASIC language config from %s\n\r", filename);
+    user_write(user,prbuf);
+
+    return config_data; 
 }

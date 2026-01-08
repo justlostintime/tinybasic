@@ -14,9 +14,8 @@ extern "C" {
 
 #include "lwip/pbuf.h"
 #include "lwip/tcp.h"
-
-#include "tcp_datatypes.h"
 #include "user.h"
+#include "tcp_datatypes.h"
 
 
 /*

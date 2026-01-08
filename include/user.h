@@ -12,8 +12,14 @@ extern "C" {
 #include "pico/stdio.h"
 #include "pico/multicore.h"
 #include "pico/sync.h"
+#include "pico/util/queue.h"
+#include "user_datatypes.h"
 #include "interpreter.h"
 #include "debug_user.h"
+
+
+#define QueueLength 32                      // length of each of the queues
+#define Initial_Root_State  user_shell      // the intial state for the root is shell commands
 
 user_context_t * create_user_context(struct tcp_pcb *server_pcb, struct tcp_pcb *client_pcb,bool system_user);
 bool delete_user_context(user_context_t *user);
@@ -38,10 +44,15 @@ bool end_user_session(struct tcp_pcb *tpcb);
 void userShell(user_context_t * user) ;
 user_context_t *get_user_list();
 user_context_t *get_user_current();
+
 int getUserChar(user_context_t *user);
 bool user_write(user_context_t *user, const char *buffer);
 int putUserChar(user_context_t *user, int c);
+int echoUserChar(user_context_t *user, int c);
+void user_flush(user_context_t *user);
+
 char *user_set_file_path(user_context_t *user, char *filepath,int pathlen);
+
 void user_clear_all_io(user_context_t *user);
 void user_push_input_buffer(user_context_t *user, char *input);
 bool user_add_char_to_input_buffer(user_context_t *user,int value);
@@ -50,6 +61,9 @@ int user_get_line(user_context_t *user, char *cmdline_buffer,int cmd_length);
 bool user_line_available(user_context_t * user);
 bool user_char_available( user_context_t *user);
 void user_display_library(user_context_t *user);
+int user_input_buffer_free_space(user_context_t *user);
+bool user_remove_char_from_buffer(user_context_t *user);
+
 void user_who(user_context_t *send_to);
  
 

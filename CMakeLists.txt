@@ -37,7 +37,7 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 
 add_executable(tinybasic tinybasic.c picow_tcp_server.c user.c hw_config.c FileSystem.c TelnetServer.c 
-               interpreter.c debug_user.c)
+               interpreter.c debug_user.c terminal.c)
                
 add_subdirectory(lib/no-OS-FatFS-SD-SPI-RPi-Pico/FatFs_SPI build)
 
@@ -52,7 +52,6 @@ pico_enable_stdio_usb(tinybasic 1)
 target_link_libraries(tinybasic
         pico_multicore
         pico_stdlib
-        pico_sha256
         )
 
 # Add the standard include files to the build

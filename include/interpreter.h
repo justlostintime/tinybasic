@@ -39,5 +39,6 @@ void ColdStart(user_context_t *user);
 void WarmStart(user_context_t * user);
 void Poke2(user_context_t*user, int loc, int valu);
 int Peek2(user_context_t *user, int loc);
+void Interp(user_context_t *user); 
 
 #endif /* INTERPRETER_H */

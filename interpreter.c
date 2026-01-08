@@ -23,8 +23,8 @@ extern  bool SwitchUser;                  // set when this users time slot is fi
 #define OutFileChar(fi,ch)       f_putc(ch,fi)
 #define ScreenChar(user,ch)      putUserChar(user,ch)
 #define KeyInChar(user)          (char)getUserChar(user)
-#define NeedsEcho          false
-#define BreakTest          Broken
+#define NeedsEcho  false
+#define BreakTest  user->i_Broken
 
 /* File input/output function macros (Qt examples:) */
 /* #define FileType           QFile* */
@@ -104,7 +104,9 @@ void Ouch(user_context_t *user,char ch) {                         /* output char
   if (oFile != NULL) {                       /* there is an output file.. */
     if (ch>=' ') OutFileChar(oFile,ch);
     else if (ch == '\r') OutFileChar(oFile,'\n');
+    if(user->echo==false) return;
   }
+  
   if (ch=='\r') {
     Core[TabHere] = 0;                    /* keep count of how long this line is */
     ScreenChar(user,'\n');
@@ -154,10 +156,10 @@ char Inch(user_context_t *user) {                            /* read input chara
   return ch;
 } /* ~Inch */
 
-int StopIt(user_context_t *user) {return BreakTest;}   /* ~StopIt, .. not implemented */
+int StopIt(user_context_t *user) {return BreakTest;}      /* ~StopIt, .. not implemented */
 
-void OutStr(user_context_t *user,char* theMsg) {         /* output a string to the console */
-  while (*theMsg != '\0') Ouch(user,*theMsg++);} /* ~OutStr */
+void OutStr(user_context_t *user,char* theMsg) {          /* output a string to the console */
+  while (*theMsg != '\0') Ouch(user,*theMsg++);}          /* ~OutStr */
 
 void OutLn(user_context_t *user) {            /* terminate output line to the console */
   OutStr(user,"\r");} /* ~OutLn */
@@ -429,13 +431,17 @@ void ListIt(user_context_t *user,int frm, int too) {            /* list the stor
     Ouch(user,' ');
     do {                                            /* print the text */
       ch = (char)Core[here++];
-      Ouch(user,ch);}
-      while (ch>'\r');}} /* ~ListIt */
+      Ouch(user,ch);
+    } while (ch>'\r');
+  }
+} /* ~ListIt */
 
 // this just takes the il file which was compiled some where and
 // reads the compiled instruction code for it..... lol so not easy to update
 void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL code */
   int valu;
+  int counter = 0;
+  char pbuf[64];
   user->i_ILend = ILfront+2;
   //printf("IL program starts at core[%d]\n\r",user->i_ILend);
   Poke2(user,ILfront,user->i_ILend);                    /* initialize pointers as promised in TBEK */
@@ -443,18 +449,23 @@ void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL c
   user->i_Core[user->i_ILend] = (aByte)BadOp;           /* illegal op, in case nothing loaded */
   if (txt == NULL) return;
   while (*txt != '\0') {                                /* get the data.. */
-    while (*txt > '\r') txt++;                          /* (no code on 1st line) */
-    if (*txt++ == '\0') break;                          /* no code at all */
-    while (*txt > ' ') txt++;                           /* skip over address */
-    if (*txt++ == '\0') break;
+    while (*txt > '\r') {txt++;}             /* (no code on 1st line) */
+    if (*txt++ == '\0') {break; }            /* no code at all */
+    while (*txt > ' ') {txt++;}              /* skip over address */
+    if (*txt++ == '\0') {break;}
     while (true) {
       valu = DeHex(user,txt++, 2);                      /* get a byte */
       if (valu<0) break;                                /* no more on this line */
       user->i_Core[user->i_ILend++] = (aByte)valu;      /* insert this byte into code */
-      txt++;}}
+      txt++;
+      counter+=2;
+    }
+  }
   //printf("IL Code ends at core[%d]\r\n",user->i_ILend);
   user->i_XQhere = 0;                                   /* requires new XQ to initialize */
   user->i_Core[user->i_ILend] = 0;                      // set user code space to 0 for empty program
+  snprintf(pbuf, sizeof(pbuf), "Loaded %d bytes of IL code.\n\r", counter);
+  user_write(user,pbuf);
 }
 
 void LineSwap(user_context_t *user,int here) {   /* swap SvPt/BP if here is not in InLine  */
@@ -466,8 +477,8 @@ void LineSwap(user_context_t *user,int here) {   /* swap SvPt/BP if here is not 
 
 void DoExitBasic(user_context_t *user) {      /* exit Tiny Basic interpreter */
   user->level = user_shell;
+  user->running=false;
   //user_complete_read_from_input_buffer(user);
-  user->WaitingWrite = io_none;
   WarmStart(user);
   SwitchUser = true;
 } /* ~ExitBasic */
@@ -479,14 +490,7 @@ void Interp(user_context_t *user) {
   int op, ix, here, chpt;                                    /* temps */
   Broken = false;          /* initialize this for possible later test */
   //static bool writeit = true;
-  while (!SwitchUser) {
-    if(user->WaitingRead==io_waiting || user->WaitingWrite==io_waiting) {
-      // if(writeit) {printf("read %d, write %d",user->WaitingRead, user->WaitingWrite); writeit=false;}
-       SwitchUser = true;    // if this is waiting for input info or output to be sent 
-       continue;
-    }
-
-    //writeit=true;
+  while (!SwitchUser && user->WaitingRead != io_waiting) {
 
     if (StopIt(user)) {
       Broken = false;
@@ -943,7 +947,6 @@ void Interp(user_context_t *user) {
         if(user->i_inFile == NULL && !user_line_available(user)) {  // if there is not a complete line to read wait for one
           user->WaitingRead = io_waiting;
           ILPC--;
-          SwitchUser = true;
           continue;
         }
 
@@ -1247,8 +1250,9 @@ void Interp(user_context_t *user) {
 /* NO      08      No Operation.                                      */
 /*                 This may be used as a space filler (such as to     */
 /* ignore a skip).                                                    */
-      default: break;} /* last of inner switch cases */
-      break; /* end of outer switch cases 0,1 */
+      default: break;
+    } /* last of inner switch cases */
+    break; /* end of outer switch cases 0,1 */
 
 /* BR a    40-7F   Relative Branch.                                   */
 /*                 The low six bits of this instruction opcode are    */
@@ -1360,149 +1364,151 @@ void Interp(user_context_t *user) {
         break;
       }
     }
+    SwitchUser = false;
   } /* ~Interp */
 
 /***************** Intermediate Interpreter Assembled *****************/
 
-char* DefaultIL() {
-  static char s[9000];    /* be sure to increase size if you add text */
-  strcpy(s,"0000 ;       1 .  ORIGINAL TINY BASIC INTERMEDIATE INTERPRETER\n");
-  strcat(s,"0000 ;       2 .\n");
-  strcat(s,"0000 ;       3 .  EXECUTIVE INITIALIZATION\n");
-  strcat(s,"0000 ;       4 .\n");
-  strcat(s,"0000 ;       5 :STRT PC \":Q^\"        COLON, X-ON\n");
-  strcat(s,"0000 243A91;\n");
-  strcat(s,"0003 ;       6       GL\n");
-  strcat(s,"0003 27;     7       SB\n");
-  strcat(s,"0004 10;     8       BE L0           BRANCH IF NOT EMPTY\n");
-  strcat(s,"0005 E1;     9       BR STRT         TRY AGAIN IF NULL LINE\n");
-  strcat(s,"0006 59;    10 :L0   BN STMT         TEST FOR LINE NUMBER\n");
-  strcat(s,"0007 C5;    11       IL              IF SO, INSERT INTO PROGRAM\n");
-  strcat(s,"0008 2A;    12       BR STRT         GO GET NEXT\n");
-  strcat(s,"0009 56;    13 :XEC  SB              SAVE POINTERS FOR RUN WITH\n");
-  strcat(s,"000A 10;    14       RB                CONCATENATED INPUT\n");
-  strcat(s,"000B 11;    15       XQ\n");
-  strcat(s,"000C 2C;    16 .\n");
-  strcat(s,"000D ;      17 .  STATEMENT EXECUTOR\n");
-  strcat(s,"000D ;      18 .\n");
-  strcat(s,"000D ;      19 :STMT BC GOTO \"LET\"\n");
-  strcat(s,"000D 8B4C45D4;\n");
-  strcat(s,"0011 ;      20       BV *            MUST BE A VARIABLE NAME\n");
-  strcat(s,"0011 A0;    21       BC * \"=\"\n");
-  strcat(s,"0012 80BD;  22 :LET  JS EXPR         GO GET EXPRESSION\n");
-  strcat(s,"0014 30BC;  23       BE *            IF STATEMENT END,\n");
-  strcat(s,"0016 E0;    24       SV                STORE RESULT\n");
-  strcat(s,"0017 13;    25       NX\n");
-  strcat(s,"0018 1D;    26 .\n");
-  strcat(s,"0019 ;      27 :GOTO BC PRNT \"GO\"\n");
-  strcat(s,"0019 9447CF;\n");
-  strcat(s,"001C ;      28       BC GOSB \"TO\"\n");
-  strcat(s,"001C 8854CF;\n");
-  strcat(s,"001F ;      29       JS EXPR         GET LINE NUMBER\n");
-  strcat(s,"001F 30BC;  30       BE *\n");
-  strcat(s,"0021 E0;    31       SB              (DO THIS FOR STARTING)\n");
-  strcat(s,"0022 10;    32       RB\n");
-  strcat(s,"0023 11;    33       GO              GO THERE\n");
-  strcat(s,"0024 16;    34 .\n");
-  strcat(s,"0025 ;      35 :GOSB BC * \"SUB\"      NO OTHER WORD BEGINS \"GO...\"\n");
-  strcat(s,"0025 805355C2;\n");
-  strcat(s,"0029 ;      36       JS EXPR\n");
-  strcat(s,"0029 30BC;  37       BE *\n");
-  strcat(s,"002B E0;    38       GS\n");
-  strcat(s,"002C 14;    39       GO\n");
-  strcat(s,"002D 16;    40 .\n");
-  strcat(s,"002E ;      41 :PRNT BC SKIP \"PR\"\n");
-  strcat(s,"002E 9050D2;\n");
-  strcat(s,"0031 ;      42       BC P0 \"INT\"     OPTIONALLY OMIT \"INT\"\n");
-  strcat(s,"0031 83494ED4;\n");
-  strcat(s,"0035 ;      43 :P0   BE P3\n");
-  strcat(s,"0035 E5;    44       BR P6           IF DONE, GO TO END\n");
-  strcat(s,"0036 71;    45 :P1   BC P4 \";\"\n");
-  strcat(s,"0037 88BB;  46 :P2   BE P3\n");
-  strcat(s,"0039 E1;    47       NX              NO CRLF IF ENDED BY ; OR ,\n");
-  strcat(s,"003A 1D;    48 :P3   BC P7 '\"'\n");
-  strcat(s,"003B 8FA2;  49       PQ              QUOTE MARKS STRING\n");
-  strcat(s,"003D 21;    50       BR P1           GO CHECK DELIMITER\n");
-  strcat(s,"003E 58;    51 :SKIP BR IF           (ON THE WAY THRU)\n");
-  strcat(s,"003F 6F;    52 :P4   BC P5 \",\"\n");
-  strcat(s,"0040 83AC;  53       PT              COMMA SPACING\n");
-  strcat(s,"0042 22;    54       BR P2\n");
-  strcat(s,"0043 55;    55 :P5   BC P6 \":\"\n");
-  strcat(s,"0044 83BA;  56       PC \"S^\"         OUTPUT X-OFF\n");
-  strcat(s,"0046 2493;  57 :P6   BE *\n");
-  strcat(s,"0048 E0;    58       NL              THEN CRLF\n");
-  strcat(s,"0049 23;    59       NX\n");
-  strcat(s,"004A 1D;    60 :P7   JS EXPR         TRY FOR AN EXPRESSION\n");
-  strcat(s,"004B 30BC;  61       PN\n");
-  strcat(s,"004D 20;    62       BR P1\n");
-  strcat(s,"004E 48;    63 .\n");
-  strcat(s,"004F ;      64 :IF   BC INPT \"IF\"\n");
-  strcat(s,"004F 9149C6;\n");
-  strcat(s,"0052 ;      65       JS EXPR\n");
-  strcat(s,"0052 30BC;  66       JS RELO\n");
-  strcat(s,"0054 3134;  67       JS EXPR\n");
-  strcat(s,"0056 30BC;  68       BC I1 \"THEN\"    OPTIONAL NOISEWORD\n");
-  strcat(s,"0058 84544845CE;\n");
-  strcat(s,"005D ;      69 :I1   CP              COMPARE SKIPS NEXT IF TRUE\n");
-  strcat(s,"005D 1C;    70       NX              FALSE.\n");
-  strcat(s,"005E 1D;    71       J STMT          TRUE. GO PROCESS STATEMENT\n");
-  strcat(s,"005F 380D;  72 .\n");
-  strcat(s,"0061 ;      73 :INPT BC RETN \"INPUT\"\n");
-  strcat(s,"0061 9A494E5055D4;\n");
-  strcat(s,"0067 ;      74 :I2   BV *            GET VARIABLE\n");
-  strcat(s,"0067 A0;    75       SB              SWAP POINTERS\n");
-  strcat(s,"0068 10;    76       BE I4\n");
-  strcat(s,"0069 E7;    77 :I3   PC \"? Q^\"       LINE IS EMPTY; TYPE PROMPT\n");
-  strcat(s,"006A 243F2091;\n");
-  strcat(s,"006E ;      78       GL              READ INPUT LINE\n");
-  strcat(s,"006E 27;    79       BE I4           DID ANYTHING COME?\n");
-  strcat(s,"006F E1;    80       BR I3           NO, TRY AGAIN\n");
-  strcat(s,"0070 59;    81 :I4   BC I5 \",\"       OPTIONAL COMMA\n");
-  strcat(s,"0071 81AC;  82 :I5   JS EXPR         READ A NUMBER\n");
-  strcat(s,"0073 30BC;  83       SV              STORE INTO VARIABLE\n");
-  strcat(s,"0075 13;    84       RB              SWAP BACK\n");
-  strcat(s,"0076 11;    85       BC I6 \",\"       ANOTHER?\n");
-  strcat(s,"0077 82AC;  86       BR I2           YES IF COMMA\n");
-  strcat(s,"0079 4D;    87 :I6   BE *            OTHERWISE QUIT\n");
-  strcat(s,"007A E0;    88       NX\n");
-  strcat(s,"007B 1D;    89 .\n");
-  strcat(s,"007C ;      90 :RETN BC END \"RETURN\"\n");
-  strcat(s,"007C 895245545552CE;\n");
-  strcat(s,"0083 ;      91       BE *\n");
-  strcat(s,"0083 E0;    92       RS              RECOVER SAVED LINE\n");
-  strcat(s,"0084 15;    93       NX\n");
-  strcat(s,"0085 1D;    94 .\n");
-  strcat(s,"0086 ;      95 :END  BC LIST \"END\"\n");
-  strcat(s,"0086 85454EC4;\n");
-  strcat(s,"008A ;      96       BE *\n");
-  strcat(s,"008A E0;    97       WS\n");
-  strcat(s,"008B 2D;    98 .\n");
-  strcat(s,"008C ;      99 :LIST BC RUN \"LIST\"\n");
-  strcat(s,"008C 984C4953D4;\n");
-  strcat(s,"0091 ;     100       BE L2\n");
-  strcat(s,"0091 EC;   101 :L1   PC \"@^@^@^@^J^@^\" PUNCH LEADER\n");
-  strcat(s,"0092 24000000000A80;\n");
-  strcat(s,"0099 ;     102       LS              LIST\n");
-  strcat(s,"0099 1F;   103       PC \"S^\"         PUNCH X-OFF\n");
-  strcat(s,"009A 2493; 104       NL\n");
-  strcat(s,"009C 23;   105       NX\n");
-  strcat(s,"009D 1D;   106 :L2   JS EXPR         GET A LINE NUMBER\n");
-  strcat(s,"009E 30BC; 107       BE L3\n");
-  strcat(s,"00A0 E1;   108       BR L1\n");
-  strcat(s,"00A1 50;   109 :L3   BC * \",\"        SEPARATED BY COMMAS\n");
-  strcat(s,"00A2 80AC; 110       BR L2\n");
-  strcat(s,"00A4 59;   111 .\n");
-  strcat(s,"00A5 ;     112 :RUN  BC CLER \"RUN\"\n");
-  strcat(s,"00A5 855255CE;\n");
-  strcat(s,"00A9 ;     113       J XEC\n");
-  strcat(s,"00A9 380A; 114 .\n");
-  strcat(s,"00AB ;     115 :CLER BC REM \"CLEAR\"\n");
-  strcat(s,"00AB 86434C4541D2;\n");
-  strcat(s,"00B1 ;     116       MT\n");
-  strcat(s,"00B1 2B;   117 .\n");
-  strcat(s,"00B2 ;     118 :REM  BC DFLT \"REM\"\n");
-  strcat(s,"00B2 845245CD;\n");
-  strcat(s,"00B6 ;     119       NX\n");
+char * DefaultIL() {
+static char *s;    /* be sure to increase size if you add text */
+    s = (char *)malloc(9000);   // be sure to increase size if you add text
+    strcpy(s,"0000 ;       1 .  ORIGINAL TINY BASIC INTERMEDIATE INTERPRETER\n");
+    strcat(s,"0000 ;       2 .\n");
+    strcat(s,"0000 ;       3 .  EXECUTIVE INITIALIZATION\n");
+    strcat(s,"0000 ;       4 .\n");
+    strcat(s,"0000 ;       5 :STRT PC \":Q^\"        COLON, X-ON\n");
+    strcat(s,"0000 243A91;\n");
+    strcat(s,"0003 ;       6       GL\n");
+    strcat(s,"0003 27;     7       SB\n");
+    strcat(s,"0004 10;     8       BE L0           BRANCH IF NOT EMPTY\n");
+    strcat(s,"0005 E1;     9       BR STRT         TRY AGAIN IF NULL LINE\n");
+    strcat(s,"0006 59;    10 :L0   BN STMT         TEST FOR LINE NUMBER\n");
+    strcat(s,"0007 C5;    11       IL              IF SO, INSERT INTO PROGRAM\n");
+    strcat(s,"0008 2A;    12       BR STRT         GO GET NEXT\n");
+    strcat(s,"0009 56;    13 :XEC  SB              SAVE POINTERS FOR RUN WITH\n");
+    strcat(s,"000A 10;    14       RB                CONCATENATED INPUT\n");
+    strcat(s,"000B 11;    15       XQ\n");
+    strcat(s,"000C 2C;    16 .\n");
+    strcat(s,"000D ;      17 .  STATEMENT EXECUTOR\n");
+    strcat(s,"000D ;      18 .\n");
+    strcat(s,"000D ;      19 :STMT BC GOTO \"LET\"\n");
+    strcat(s,"000D 8B4C45D4;\n");
+    strcat(s,"0011 ;      20       BV *            MUST BE A VARIABLE NAME\n");
+    strcat(s,"0011 A0;    21       BC * \"=\"\n");
+    strcat(s,"0012 80BD;  22 :LET  JS EXPR         GO GET EXPRESSION\n");
+    strcat(s,"0014 30BC;  23       BE *            IF STATEMENT END,\n");
+    strcat(s,"0016 E0;    24       SV                STORE RESULT\n");
+    strcat(s,"0017 13;    25       NX\n");
+    strcat(s,"0018 1D;    26 .\n");
+    strcat(s,"0019 ;      27 :GOTO BC PRNT \"GO\"\n");
+    strcat(s,"0019 9447CF;\n");
+    strcat(s,"001C ;      28       BC GOSB \"TO\"\n");
+    strcat(s,"001C 8854CF;\n");
+    strcat(s,"001F ;      29       JS EXPR         GET LINE NUMBER\n");
+    strcat(s,"001F 30BC;  30       BE *\n");
+    strcat(s,"0021 E0;    31       SB              (DO THIS FOR STARTING)\n");
+    strcat(s,"0022 10;    32       RB\n");
+    strcat(s,"0023 11;    33       GO              GO THERE\n");
+    strcat(s,"0024 16;    34 .\n");
+    strcat(s,"0025 ;      35 :GOSB BC * \"SUB\"      NO OTHER WORD BEGINS \"GO...\"\n");
+    strcat(s,"0025 805355C2;\n");
+    strcat(s,"0029 ;      36       JS EXPR\n");
+    strcat(s,"0029 30BC;  37       BE *\n");
+    strcat(s,"002B E0;    38       GS\n");
+    strcat(s,"002C 14;    39       GO\n");
+    strcat(s,"002D 16;    40 .\n");
+    strcat(s,"002E ;      41 :PRNT BC SKIP \"PR\"\n");
+    strcat(s,"002E 9050D2;\n");
+    strcat(s,"0031 ;      42       BC P0 \"INT\"     OPTIONALLY OMIT \"INT\"\n");
+    strcat(s,"0031 83494ED4;\n");
+    strcat(s,"0035 ;      43 :P0   BE P3\n");
+    strcat(s,"0035 E5;    44       BR P6           IF DONE, GO TO END\n");
+    strcat(s,"0036 71;    45 :P1   BC P4 \";\"\n");
+    strcat(s,"0037 88BB;  46 :P2   BE P3\n");
+    strcat(s,"0039 E1;    47       NX              NO CRLF IF ENDED BY ; OR ,\n");
+    strcat(s,"003A 1D;    48 :P3   BC P7 '\"'\n");
+    strcat(s,"003B 8FA2;  49       PQ              QUOTE MARKS STRING\n");
+    strcat(s,"003D 21;    50       BR P1           GO CHECK DELIMITER\n");
+    strcat(s,"003E 58;    51 :SKIP BR IF           (ON THE WAY THRU)\n");
+    strcat(s,"003F 6F;    52 :P4   BC P5 \",\"\n");
+    strcat(s,"0040 83AC;  53       PT              COMMA SPACING\n");
+    strcat(s,"0042 22;    54       BR P2\n");
+    strcat(s,"0043 55;    55 :P5   BC P6 \":\"\n");
+    strcat(s,"0044 83BA;  56       PC \"S^\"         OUTPUT X-OFF\n");
+    strcat(s,"0046 2493;  57 :P6   BE *\n");
+    strcat(s,"0048 E0;    58       NL              THEN CRLF\n");
+    strcat(s,"0049 23;    59       NX\n");
+    strcat(s,"004A 1D;    60 :P7   JS EXPR         TRY FOR AN EXPRESSION\n");
+    strcat(s,"004B 30BC;  61       PN\n");
+    strcat(s,"004D 20;    62       BR P1\n");
+    strcat(s,"004E 48;    63 .\n");
+    strcat(s,"004F ;      64 :IF   BC INPT \"IF\"\n");
+    strcat(s,"004F 9149C6;\n");
+    strcat(s,"0052 ;      65       JS EXPR\n");
+    strcat(s,"0052 30BC;  66       JS RELO\n");
+    strcat(s,"0054 3134;  67       JS EXPR\n");
+    strcat(s,"0056 30BC;  68       BC I1 \"THEN\"    OPTIONAL NOISEWORD\n");
+    strcat(s,"0058 84544845CE;\n");
+    strcat(s,"005D ;      69 :I1   CP              COMPARE SKIPS NEXT IF TRUE\n");
+    strcat(s,"005D 1C;    70       NX              FALSE.\n");
+    strcat(s,"005E 1D;    71       J STMT          TRUE. GO PROCESS STATEMENT\n");
+    strcat(s,"005F 380D;  72 .\n");
+    strcat(s,"0061 ;      73 :INPT BC RETN \"INPUT\"\n");
+    strcat(s,"0061 9A494E5055D4;\n");
+    strcat(s,"0067 ;      74 :I2   BV *            GET VARIABLE\n");
+    strcat(s,"0067 A0;    75       SB              SWAP POINTERS\n");
+    strcat(s,"0068 10;    76       BE I4\n");
+    strcat(s,"0069 E7;    77 :I3   PC \"? Q^\"       LINE IS EMPTY; TYPE PROMPT\n");
+    strcat(s,"006A 243F2091;\n");
+    strcat(s,"006E ;      78       GL              READ INPUT LINE\n");
+    strcat(s,"006E 27;    79       BE I4           DID ANYTHING COME?\n");
+    strcat(s,"006F E1;    80       BR I3           NO, TRY AGAIN\n");
+    strcat(s,"0070 59;    81 :I4   BC I5 \",\"       OPTIONAL COMMA\n");
+    strcat(s,"0071 81AC;  82 :I5   JS EXPR         READ A NUMBER\n");
+    strcat(s,"0073 30BC;  83       SV              STORE INTO VARIABLE\n");
+    strcat(s,"0075 13;    84       RB              SWAP BACK\n");
+    strcat(s,"0076 11;    85       BC I6 \",\"       ANOTHER?\n");
+    strcat(s,"0077 82AC;  86       BR I2           YES IF COMMA\n");
+    strcat(s,"0079 4D;    87 :I6   BE *            OTHERWISE QUIT\n");
+    strcat(s,"007A E0;    88       NX\n");
+    strcat(s,"007B 1D;    89 .\n");
+    strcat(s,"007C ;      90 :RETN BC END \"RETURN\"\n");
+    strcat(s,"007C 895245545552CE;\n");
+    strcat(s,"0083 ;      91       BE *\n");
+    strcat(s,"0083 E0;    92       RS              RECOVER SAVED LINE\n");
+    strcat(s,"0084 15;    93       NX\n");
+    strcat(s,"0085 1D;    94 .\n");
+    strcat(s,"0086 ;      95 :END  BC LIST \"END\"\n");
+    strcat(s,"0086 85454EC4;\n");
+    strcat(s,"008A ;      96       BE *\n");
+    strcat(s,"008A E0;    97       WS\n");
+    strcat(s,"008B 2D;    98 .\n");
+    strcat(s,"008C ;      99 :LIST BC RUN \"LIST\"\n");
+    strcat(s,"008C 984C4953D4;\n");
+    strcat(s,"0091 ;     100       BE L2\n");
+    strcat(s,"0091 EC;   101 :L1   PC \"@^@^@^@^J^@^\" PUNCH LEADER\n");
+    strcat(s,"0092 24000000000A80;\n");
+    strcat(s,"0099 ;     102       LS              LIST\n");
+    strcat(s,"0099 1F;   103       PC \"S^\"         PUNCH X-OFF\n");
+    strcat(s,"009A 2493; 104       NL\n");
+    strcat(s,"009C 23;   105       NX\n");
+    strcat(s,"009D 1D;   106 :L2   JS EXPR         GET A LINE NUMBER\n");
+    strcat(s,"009E 30BC; 107       BE L3\n");
+    strcat(s,"00A0 E1;   108       BR L1\n");
+    strcat(s,"00A1 50;   109 :L3   BC * \",\"        SEPARATED BY COMMAS\n");
+    strcat(s,"00A2 80AC; 110       BR L2\n");
+    strcat(s,"00A4 59;   111 .\n");
+    strcat(s,"00A5 ;     112 :RUN  BC CLER \"RUN\"\n");
+    strcat(s,"00A5 855255CE;\n");
+    strcat(s,"00A9 ;     113       J XEC\n");
+    strcat(s,"00A9 380A; 114 .\n");
+    strcat(s,"00AB ;     115 :CLER BC REM \"CLEAR\"\n");
+    strcat(s,"00AB 86434C4541D2;\n");
+    strcat(s,"00B1 ;     116       MT\n");
+    strcat(s,"00B1 2B;   117 .\n");
+    strcat(s,"00B2 ;     118 :REM  BC DFLT \"REM\"\n");
+    strcat(s,"00B2 845245CD;\n");
+    strcat(s,"00B6 ;     119       NX\n");
   strcat(s,"00B6 1D;   120 .\n");
   strcat(s,"00B7 ;     121 :DFLT BV *            NO KEYWORD...\n");
   strcat(s,"00B7 A0;   122       BC * \"=\"        TRY FOR LET\n");
@@ -1618,12 +1624,14 @@ char* DefaultIL() {
   strcat(s,"014C 0906; 226       RT\n");
   strcat(s,"014E 2F;   227 :R5   BC R6 \"<\"\n");
   strcat(s,"014F 84BC; 228       LB 5             ><\n");
-  strcat(s,"0151 0905; 229       RT\n");
-  strcat(s,"0153 2F;   230 :R6   LB 4             >\n");
-  strcat(s,"0154 0904; 231       RT\n");
-  strcat(s,"0156 2F;   232 .\n");
-  strcat(s,"0157 ;    0000\n");
-  return s;} /* ~DefaultIL */
+    strcat(s,"0151 0905; 229       RT\n");
+    strcat(s,"0153 2F;   230 :R6   LB 4             >\n");
+    strcat(s,"0154 0904; 231       RT\n");
+    strcat(s,"0156 2F;   232 .\n");
+    strcat(s,"0157 ;    0000\n");
+
+  return s;
+} /* ~DefaultIL */
 
 //**************************** Startup Code ****************************
 
@@ -1672,6 +1680,7 @@ void UserInitTinyBasic(user_context_t *user, char * ILtext) {
   int nx;
 
   if(user->BasicInitComplete) return;                       // already done
+  
   user->i_Core = (aByte *)calloc(1,user->MemorySize);       // allocate memory for interpreter core
   if (!user->i_Core) {
       user_write(user, "TinyBasic: Unable to allocate memory for interpreter core.\n");
