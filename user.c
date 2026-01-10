@@ -127,11 +127,20 @@ bool is_user_timed_out(user_context_t *user) {
     return (current_time - user->last_active_time) > USER_TIMEOUT_MS;            // lets fix this to make it simple
 }
 
-user_context_t * find_user_by_username(const char *username) {
+user_context_t * find_user_by_username(const char *username, char * password) {
     sem_acquire_blocking(&user_list_sema);
     user_context_t *user = ActiveUsers;
     while (user) {
         if (strcmp(user->username, username) == 0) {
+            if(password != NULL) {
+                if(strcmp(user->password,password) == 0) {
+                    sem_release(&user_list_sema);
+                    return user;
+                } else {
+                    sem_release(&user_list_sema);
+                    return NULL;
+                }
+            }
             sem_release(&user_list_sema);
             return user;
         }
@@ -300,12 +309,24 @@ user_context_t *login_user(user_context_t *user) {
 
     if (logon_type == ':') {
         // System user login
-        user_context_t *existing_user = find_user_by_username(username);
+        user_context_t *existing_user = find_user_by_username(username,NULL);
+        if(existing_user == NULL) {
+            char dir_password[128];
+            if(exists_home(user,username,dir_password,sizeof(dir_password))) {
+                printf("checking if user exists %s-%s\n",username,password);
+                if(strcmp(password,dir_password) != 0) {
+                    snprintf(buffer,sizeof(buffer),"User exists but password is incorrect\n\r",username);
+                    user_write(user,buffer);
+                    return (user_context_t *)NULL; // Invalid password and user combination    
+                }
+            }
+        }
+
         if (existing_user) {
             if (strncmp(existing_user->password, password, sizeof(existing_user->password)) != 0){
                 snprintf(buffer,sizeof(buffer),"That user is logged in but passwords do not match\n\r");
                 user_write(user,buffer);
-                return (user_context_t *)false; // Invalid password and user combination
+                return (user_context_t *)NULL; // Invalid password and user combination
             }
             // for now if passwords  match just create a new session for that user, later we can improve this
             if(!existing_user->logged_in) { // if user is not logged in then use that context
@@ -668,7 +689,7 @@ char *user_set_file_path(user_context_t *user, char *filepath,int pathlen) {
     if(user->SystemUser) {
         snprintf(fullpath,sizeof(fullpath),"%s",filepath);
     } else {
-        snprintf(fullpath,sizeof(fullpath),"/user/%s-%s/%s",user->username,user->password,filepath);
+        snprintf(fullpath,sizeof(fullpath),"/home/%s-%s/%s",user->username,user->password,filepath);
         //now replace all ../ with nothing to prevent directory traversal
         char *p;
         while((p = strstr(fullpath, "../")) != NULL) {
@@ -680,591 +701,34 @@ char *user_set_file_path(user_context_t *user, char *filepath,int pathlen) {
     return filepath;
 }
 
-//------------------------------------------------------------------------------
-// utility function trim leading and trailing spaces from a string
-char * strtrim(char *str) {
-    int i, begin = 0, end = strlen(str) - 1;
-
-    // Find the index of the first non-space character
-    while (begin <= end && isspace((unsigned char) str[begin])) {
-        begin++;
-    }
-
-    // Find the index of the last non-space character
-    while (end >= begin && isspace((unsigned char) str[end])) {
-        end--;
-    }
-
-    // Shift all non-space characters to the start of the string array
-    for (i = begin; i <= end; i++) {
-        str[i - begin] = str[i];
-    }
-
-    // Null terminate the string at the new end
-    str[i - begin] = '\0';
-    return str;
-}
-// Begin user shell commands ___________________________________________________________________________________________
-char *convert_time_to_text(char *buffer, int buflen, uint64_t milliseconds) {
-    uint64_t ms = milliseconds;
-
-    // Calculate days, hours, minutes, seconds, and remaining milliseconds
-    uint32_t days = ms / (1000 * 60 * 60 * 24);
-    ms %= (uint64_t)(1000 * 60 * 60 * 24); // Remaining ms after extracting days
-    
-    uint32_t hours = ms / (1000 * 60 * 60);
-    ms %= (uint64_t)(1000 * 60 * 60); // Remaining ms after extracting hours
-
-    uint32_t minutes = ms / (1000 * 60);
-    ms %= (uint64_t)(1000 * 60); // Remaining ms after extracting minutes
-
-    uint32_t seconds = ms / 1000;
-    ms %= 1000; // Remaining milliseconds
-
-    // Print the result in a readable format (e.g., "01d 02h 03m 04s 005ms")
-    snprintf(buffer, buflen,"%02ud days, %02uh hours, %02um minutes, %02us seconds, %03ums",
-           days, hours, minutes, seconds, (uint32_t)ms);
-    return buffer;
-}
-
-void user_who(user_context_t *send_to) {
-    user_context_t *user = get_user_list();
-    struct tcp_pcb *tpcb = send_to->state.client_pcb;
-    char buffer[256],TimeBuffer[64],TimeBuffer2[64];
-    char longname[64];
-    unsigned int TotalUserMemory = 0;
-
-    snprintf(buffer,sizeof(buffer),"User Count : %d , Active Basic='*', Shell='+'\n\r",count_active_users());
-    user_write(send_to,buffer);
-    snprintf(buffer,sizeof(buffer),"Process usage : Core 0 %s\n\rProcess usage : Core 1 %s\n\r Raw time ms: 0=%20lu, 1=%20lu\n\r",
-                                     convert_time_to_text(TimeBuffer, sizeof(TimeBuffer),Process_time_core0),
-                                     convert_time_to_text(TimeBuffer2, sizeof(TimeBuffer2),Process_time_core1));
-    user_write(send_to,buffer);
-    
-    while (user) {
-        snprintf(longname,sizeof(longname),"%10s",user->username ? user->username : "No Loggin");
-        if(user->state.client_pcb == NULL) {
-            snprintf(longname+strlen(longname),sizeof(longname)-strlen(longname)," (Local Console)");
-        } else {
-            snprintf(longname+strlen(longname),sizeof(longname)-strlen(longname)," (%d.%d.%d.%d:%d)",
-                ip4_addr1_16(&user->state.client_pcb->remote_ip),
-                ip4_addr2_16(&user->state.client_pcb->remote_ip),
-                ip4_addr3_16(&user->state.client_pcb->remote_ip),
-                ip4_addr4_16(&user->state.client_pcb->remote_ip),
-                user->state.client_pcb->remote_port);
-        }
-
-        char activity = ' ';
-        if(user == core1_user) activity = '*';
-         else if(user == core0_user) activity = '+';
-
-        snprintf(buffer,sizeof(buffer),"%8X, %-35s, %-12s, %-3s, %9llu %9llu, %4s, Mem(%6u), io: wr(%1d) rd(%1d) %c\n\r",
-                        user->state.client_pcb,
-                        longname,
-                        status_text[user->level], 
-                        user->logged_in ? "On " : "Off",
-                        user->last_active_time , user->active_time_used,
-                        user->SystemUser ? "Root" : "User",
-                        (user->i_Core ? USER_MEMORY_SIZE: 0)+sizeof(user_context_t),
-                        user->WaitingWrite,user->WaitingRead,activity
-                    );
-        user_write(send_to,buffer);
-        TotalUserMemory += (user->i_Core ? USER_MEMORY_SIZE: 0)+sizeof(user_context_t);
-        user = user->next;
-    }
-    uint64_t IdleTime = to_ms_since_boot(get_absolute_time()) - Process_time_core0 - Process_time_core1;
-    snprintf(buffer,sizeof(buffer),"Total User Memory in use : %u bytes, CPU Idle time %s\n\r",TotalUserMemory,
-                                convert_time_to_text(TimeBuffer, sizeof(TimeBuffer),IdleTime));
-    user_write(send_to,buffer);
-    return;
-}
-
-// help command
-const char * user_help_text[] = {"Commands:(case is ignored)\n\r",
-                                "  Who - see who is logged on\n\r",
-                                "  Free - See amount of available memory\n\r",
-                                "  Quit - Log off session\n\r",
-                                "  Basic - Warm Start Basic, use : bye to exit Basic and return to shell\r\n",
-                                "  Clear - Clear the screen\n\r"
-                                "  Dir or LS [dirpath] - List files in directory\n\r",
-                                "  Type or Cat <filepath> - display contents of file\n\r",
-                                "  Mkdir <dirname> - create a directory\n\r",
-                                "  Rmdir <dirname> - remove a directory\n\r",
-                                "  Del or rm <path to file> - delete a file\n\r",
-                                "  Rename/Mv <sourcefile> <destfile> - rename or move a file\n\r",
-                                "  Help - display this help message\n\r",
-                                "  Send <username> 'Message Text' - send message to another user\n\r",
-                                "Basic program commands:\n\r",
-                                "  Load <filename> - Load a Tiny Basic program from file into memory\n\r",
-                                "  Save <filename> - Save the current Tiny Basic program memory to a file\n\r",
-                                "  List - List the current Tiny Basic program in memory\n\r",
-                                "  Run - Run the current Tiny Basic program in memory\n\r",
-                                "  FreeMem - display the amount of free memory for basic programs\n\r",
-                                "  Library - display a list of programs in the library\n\r",
-                                "  Get - get a copy of a program from the library to your local directory\n\r",
-                                NULL};
-const char * user_help_Sys[] = {"  Broadcast 'Message Text' - send message to all users[Sysuser only]\n\r",
-                                "  Force <username> - Force user logoff[Sysuser only]\n\r",
-                                "  Kill <task id>   - kill a particular user task by ID\n\r",
-                                NULL   
-                                };
-
-void user_help_print(user_context_t *send_to){
-    terminal_set_colors(send_to,TERM_COLOR_LIGHT_GREEN,TERM_COLOR_BLACK);
-    terminal_clear(send_to);
-    terminal_puts(send_to,"\n\rTiny Basic Time Share System Help\n\r");
-    int count = 0;
-    while(user_help_text[count]) {
-        terminal_puts(send_to,user_help_text[count]);
-        count++;
-    }
-    if(send_to->SystemUser)  {
-        user_write(send_to,"\n\rSystem User Commands:\n\r");
-        count = 0;
-        while(user_help_Sys[count]) {
-            user_write(send_to,user_help_Sys[count]);
-            count++;
-        }  
-    }
-}
-
-// free command
-void user_free_space(user_context_t *send_to) {
-    char buffer[128];
-    struct mallinfo m = mallinfo();
-    uint32_t total_heap_size = &__StackLimit  - &__bss_end__; // adjust if necessary
-    uint32_t free_sram = total_heap_size - m.uordblks;
-    snprintf(buffer,sizeof(buffer),"Base Mem 512K, System:%u, User:%u, used %u, free %u\n\r", 512*1024 - total_heap_size, total_heap_size, m.uordblks, free_sram);
-    user_write(send_to,buffer);
-}
-
-// user quits/ logs off
-void user_quit(user_context_t *user) {
-    char buffer[128];
-    if(!user->SystemUser)  {
-        user_logoff(user);
-    } else {
-        snprintf(buffer,sizeof(buffer),"System User %s cannot quit session\n\r",user->username);
-        user_write(user,buffer);
-    }
-}
-
-// display a directory listing for the user
-// system sees / users see only thier home directory
-void user_directory_listing(user_context_t *user, char *buffer, int buffer_length) {
-    display_directory(user,  buffer, buffer_length,false);
-}
-
-// library management functions
-void user_display_library(user_context_t *user){
-    const char libcmd[]={"lib /library"};
-    display_directory(user, (char *)libcmd , sizeof(libcmd),true);
-}
-
-void user_get_library_entry(user_context_t *user, char *buffer, int buffer_length){
-    char cmd[20];
-    char buf[128];
-    char fromname[128];
-    char toname[128];
-    sscanf(buffer, "%19s %127s",cmd,buf);
-    strcpy(fromname,"/library/");
-    strcat(fromname,buf);
-    strcpy(toname,buf);
-    user_set_file_path(user,toname,sizeof(toname));
-    Copy_file(user,fromname,toname);
-}
-
-// create a directory for the user
-void user_create_dir(user_context_t *user, char *cmdline, int buffer_length) {
-    char cmd[20];
-    char dirname[128];
-    sscanf(cmdline, "%19s %127s",cmd,dirname);
-    user_create_directory(user,dirname);
-}
-
-// delete a directory for the user
-void user_delete_dir(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char dirname[128];
-    sscanf(cmdline, "%19s %127s",cmd,dirname);
-    user_remove_directory(user,dirname);
-}
-
-// rename a file for the user
-void user_rename_file(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char sourcefile[128];
-    char destfile[128];
-    sscanf(cmdline, "%19s %127s %127s",cmd,sourcefile,destfile);
-    user_rename_user_file(user,sourcefile,destfile);
-}
-
-// unknown command handler
-void user_unknown_command(user_context_t *user, char *cmdline, int cmd_length) {
-    char buffer[64];
-    if(cmdline[0] == 0) {
-        user_write(user,"\r\n");
-        return;
-    }
-    snprintf(buffer,sizeof(buffer),"Unknown command: '%s'\n\r",cmdline);
-    user_write(user,buffer);
-}
-
-void user_more_file(user_context_t *user, char *cmdline, int cmd_length) {
-
-}
-
-// cat or type the content of a file
-void user_type_file(user_context_t *user, char *cmdline, int cmd_length) {
-    FIL fil;
-    FRESULT fr;
-    char buffer[256];
-    char filename[128];
-    sscanf(cmdline, "%127s %127s",buffer,filename);
-    user_set_file_path(user,filename,sizeof(filename));
-
-    fr = f_open(&fil,filename, FA_READ);
-    if (FR_OK != fr) {
-        snprintf(buffer,sizeof(buffer),"error: %s (%d)\n\r", filename, FRESULT_str(fr), fr);
-        user_write(user,buffer);
-        return;
-    }
-    while (1) {
-        UINT br; // number of bytes read
-        char read_buffer[129];
-        fr = f_read(&fil, read_buffer, 128, &br);
-        if (FR_OK != fr) {
-            snprintf(buffer,sizeof(buffer),"error: %s (%d)\n\r", filename, FRESULT_str(fr), fr);
-            user_write(user,buffer);
-            break;
-        }
-        if (br == 0) {
-            break; // end of file
-        }
-        read_buffer[br] = '\0'; // null terminate
-        user_write(user,read_buffer);
-    }
-    user_write(user,"\n\r");
-    f_close(&fil);
-}
-
-void user_broadcast_message(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char message[200];
-    char buffer[256];
-    if(!user->SystemUser) {
-        user_write(user,"Broadcast command is only available to System Users\n\r");
-        return;
-    }
-
-    sscanf(cmdline, "%19s %199[^\n\r]",cmd,message);
-    user_context_t *target_user = get_user_list();
-    while (target_user) {
-        if(target_user->state.client_pcb != NULL) {
-            snprintf(buffer,sizeof(buffer),"Broadcast Message from %s: %s\n\r",user->username,message);
-            user_write(target_user,buffer);
-        }
-        target_user = target_user->next;
-    }
-
-    snprintf(buffer,sizeof(buffer),"Broadcast Message sent to all connected users\n\r");
-    user_write(user,buffer);
-} 
-
-void user_send_message(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char target_username[64];
-    char message[200];
-    char buffer[256];
-    sscanf(cmdline, "%19s %63s %199[^\n\r]",cmd,target_username,message);
-    user_context_t *target_user = find_user_by_username(target_username);
-    if(!target_user) {
-        snprintf(buffer,sizeof(buffer),"User %s not found\n\r",target_username);
-        user_write(user,buffer);
-        return;
-    }
-    if(target_user->state.client_pcb == NULL && !target_user->SystemUser) {
-        snprintf(buffer,sizeof(buffer),"User %s not connected\n\r",target_username);
-        user_write(user,buffer);
-        return;
-    }
-    snprintf(buffer,sizeof(buffer),"Message from %s: %s\n\r",user->username,message);
-    user_write(target_user,buffer);
-    snprintf(buffer,sizeof(buffer),"Message sent to %s\n\r",target_username);
-    user_write(user,buffer);
-}
-
-void user_force_user(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char target_username[64];
-    char buffer[128];
-    if(!user->SystemUser) {
-        user_write(user,"Force command is only available to System Users\n\r");
-        return;
-    }
-
-    sscanf(cmdline, "%19s %63s",cmd,target_username);
-    user_context_t *target_user = find_user_by_username(target_username);
-    if(!target_user) {
-        snprintf(buffer,sizeof(buffer),"User %s not found\n\r",target_username);
-        user_write(user,buffer);
-        return;
-    }
-    if(target_user->SystemUser) {
-        snprintf(buffer,sizeof(buffer),"Cannot force logoff of System User %s\n\r",target_username);
-        user_write(user,buffer);
-        return;
-    }
-    target_user->level = user_removed;
-    snprintf(buffer,sizeof(buffer),"User %s has been forced to logoff\n\r",target_username);
-    user_write(user,buffer);
-}
-
-void user_kill_task(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    struct tcp_pcb *target_taskid;
-    char buffer[128];
-    if(!user->SystemUser) {
-        user_write(user,"Kill command is only available to System Users\n\r");
-        return;
-    }
-    sscanf(cmdline, "%19s %X",cmd,target_taskid);
-    user_context_t *target_task = find_user_by_tcp_pcb(target_taskid);
-    if(!target_task) {
-        snprintf(buffer,sizeof(buffer),"Task ID %X not found\n\r",target_taskid);
-        user_write(user,buffer);
-        return;
-    }
-    if(target_task->SystemUser) {
-        snprintf(buffer,sizeof(buffer),"Cannot kill tasks of System User ID=%X\n\r",target_taskid);
-        user_write(user,buffer);
-        return;
-    }
-    target_task->level = user_removed;
-    snprintf(buffer,sizeof(buffer),"Task %X has been killed\n\r",target_taskid);
-    user_write(user,buffer);
-}
-
-
-// set tinybasic define to load from file
-void user_basic_load_file(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char filename[128];
-    char buffer[256];
-    FIL *ifile;
-
-    sscanf(cmdline, "%19s %127s",cmd,filename);
-    user_set_file_path(user,filename,sizeof(filename));
-
-    snprintf(buffer,sizeof(buffer),"Loading BASIC program from file %s\n\r",filename);
-    user_write(user,buffer);
-    if(!user->BasicInitComplete) {              // if not initialized then do so now
-        UserInitTinyBasic(user,tinybasicIL);
-    }
-
-    ifile = calloc(1, sizeof(FIL));
-    if(ifile) {
-        FRESULT fr = f_open(ifile, filename, FA_READ);
-        if (FR_OK != fr) {
-            snprintf(buffer,sizeof(buffer),"f_open(%s) for read error: %s (%d)\n\r", filename, FRESULT_str(fr), fr);
-            user_write(user,buffer);
-            free(ifile);
-            ifile = NULL;
-            return;
-        }
-        ColdStart(user);            // reset the interpreter to be empty
-        clear_console_buffer(user);
-        user->i_inFile = ifile;
-        user->ExitWhenDone = true;
-        user->level = user_basic;
-        user->WaitingRead = io_none;
-        user->echo=false;
-    } else {
-        user_write(user,"Failed to allocate file object for BASIC program load\n\r");
-    }
-}
-
-void user_basic_run_file(user_context_t *user, char *cmdline , int cmd_length) {
-    if(!user->BasicInitComplete) {              // if not initialized then do so now
-        user_write(user,"No BASIC program loaded\n\r");
-        return;
-    }
-
-    user_push_input_buffer(user,"RUN\r");            // push the run command onto the input buffer
-    user->ExitWhenDone = true;
-    user->level=user_basic;                          // run the program
-}
-
-void user_basic_list_file(user_context_t *user) {
-    if(!user->BasicInitComplete) {              // if not initialized then just return
-        user_write(user,"No BASIC program loaded\n\r");
-        return;
-    }
-    ListIt(user,0,0);                                // list the program to the console
-}
-
-void user_basic_save_file(user_context_t *user, char *cmdline, int cmd_length) {
-    char cmd[20];
-    char filename[128];
-    char buffer[256];
-    FIL *ofile;
-
-    if(!user->BasicInitComplete) {              // if not initialized then do nothing
-        user_write(user,"Nothing to save\n\r");
-        return;
-    }
-
-    sscanf(cmdline, "%19s %127s",cmd,filename);
-    user_set_file_path(user,filename,sizeof(filename));
-    snprintf(buffer,sizeof(buffer),"Saving BASIC program to file %s\n\r",filename);
-    user_write(user,buffer);
-
-    ofile = calloc(1, sizeof(FIL));
-    if(ofile) {
-        FRESULT fr = f_open(ofile, filename, FA_WRITE | FA_CREATE_ALWAYS);
-        if (FR_OK != fr) {
-            snprintf(buffer,sizeof(buffer),"error: %s (%d)\n\r", filename, FRESULT_str(fr), fr);
-            user_write(user,buffer);
-            free(ofile);
-            ofile = NULL;
-            return;
-        }
-        user->i_oFile = ofile;
-        user->echo = false;
-        ListIt(user,0,0);                                // save the listing to the output file
-        f_close(ofile);
-        free(ofile);
-        ofile = NULL;
-        user->echo = true;
-        WarmStart(user);
-        user_write(user,"BASIC program save complete\n\r");
-    } else {
-        user_write(user,"Failed to allocate file object for BASIC program save\n\r");
-    }
-}  
-
-void user_free_basic_memory(user_context_t *user) {
-    char buffer[256];
-    if(!user->BasicInitComplete) {
-        UserInitTinyBasic(user,tinybasicIL);
-    }
-    int freemem = USER_MEMORY_SIZE - Peek2(user,EndProg);
-    snprintf(buffer,sizeof(buffer),"Memory : Total %d, free %d, user Program : start %d, end %d\r\n",
-                                    USER_MEMORY_SIZE,
-                                    freemem,
-                                    Peek2(user,UserProg),
-                                    Peek2(user,EndProg));         // actual core offset from program space used or total user program length
-                                    
-    user_write(user,buffer);
-}
-
-// The shell command processor
-const char *shellcmds[] = {"WHO","FREE","HELP","QUIT","BASIC","DIR","LS","MKDIR","RMDIR","CAT","TYPE","SEND","BROADCAST",
-                           "CLEAR","FORCE","LOAD","SAVE","RENAME","MV","RM", "DEL","LIST","RUN","FREEMEM","LIBRARY","GET","KILL","READ",0};
-enum {CMD_WHO, CMD_FREE, CMD_HELP, CMD_QUIT, CMD_BASIC, CMD_DIR, CMD_LS, CMD_MKDIR, CMD_RMDIR, CMD_CAT, CMD_TYPE, CMD_SEND, CMD_BROADCAST, CMD_CLEAR,
-     CMD_FORCE, CMD_LOAD, CMD_SAVE, CMD_RENAME,CMD_MV,CMD_RM,CMD_DEL,CMD_LIST,CMD_RUN,CMD_FREEMEM,CMD_LIBRARY, CMD_GET, CMD_KILL,CMD_READ, CMD_UNKNOWN};
-
-int lookup_shell_command(const char *cmd) {
-    for (int i = 0; shellcmds[i] != 0; i++) {
-        if (strncasecmp(cmd, shellcmds[i], strlen(cmd)) == 0) {
-            return i;
+// check if the home directory exists for the user
+// if it exists return true and the full path in fullpath
+bool exists_home(user_context_t *user, char *username, char *Dir_password, int dirpwlen) {
+    DIR dir;
+    FILINFO fno;
+    FRESULT res;
+    size_t ulen = strlen(username);
+    res = f_opendir(&dir, "/home");
+    if (res != FR_OK) return false;
+    bool found = false;
+    for (;;) {
+        res = f_readdir(&dir, &fno);
+        if (res != FR_OK || fno.fname[0] == 0) break;
+        if (!(fno.fattrib & AM_DIR)) continue;
+        const char *name = fno.fname;
+        if (strcmp(name, ".") == 0 || strcmp(name, "..") == 0) continue;
+        if (strncmp(name, username, ulen) == 0) {
+            char next = name[ulen];
+            if (next == '-' || next == '\0') { 
+                found = true; 
+                // return the password part for this directory
+                if(Dir_password != NULL) strncpy(Dir_password,&fno.fname[ulen+1],dirpwlen-1);
+                break; 
+            }
         }
     }
-    return CMD_UNKNOWN;
+
+    f_closedir(&dir);
+    return found;
 }
 
-void userShell(user_context_t * user) {
-    char cmd[20];
-    int cmdindex;
-    char buffer[256];
-
-    // later this will be a basic program
-    user_get_line(user,buffer,sizeof(buffer));
-    strtrim(buffer);
-    sscanf(buffer, "%19s",cmd);
-    cmdindex = lookup_shell_command(cmd);
-
-    DEBUG_printf("User Shell Request from %s id %8X User Type(%-7s) cmd(%s): '%s' \n\r",user->username,
-                 user->SystemUser ? user->state.server_pcb:user->state.client_pcb,
-                 user->SystemUser ? "System": "User",cmd,buffer);
-
-    switch(cmdindex) {
-        case CMD_WHO:
-            user_who(user);
-            break;
-        case CMD_FREE:
-            user_free_space(user);
-            break;
-        case CMD_HELP:
-            user_help_print(user);
-            break;
-        case CMD_QUIT:
-            user_quit(user);
-            break;
-        case CMD_BASIC:
-            user->level = user_basic;
-            break;
-        case CMD_DIR:
-        case CMD_LS:
-            user_directory_listing(user,buffer,sizeof(buffer));
-            break;
-        case CMD_MKDIR:
-            user_create_dir(user,buffer,sizeof(buffer));
-            break;
-        case CMD_RMDIR:
-        case CMD_RM:
-        case CMD_DEL:
-            user_delete_dir(user,buffer,sizeof(buffer));
-            break;
-        case CMD_CAT:
-        case CMD_TYPE:
-            user_type_file(user,buffer,sizeof(buffer));
-            break;
-        case CMD_SEND:
-            user_send_message(user,buffer,sizeof(buffer));
-            break;
-        case CMD_BROADCAST:
-            user_broadcast_message(user,buffer,sizeof(buffer));
-            break;
-        case CMD_CLEAR:
-            user_write(user,"\e[2J\e[H"); // clear screen
-            break;
-        case CMD_FORCE:
-            user_force_user(user,buffer,sizeof(buffer));
-            break;
-        case CMD_LOAD:
-            user_basic_load_file(user,buffer,sizeof(buffer));
-            break; 
-        case CMD_SAVE:
-            user_basic_save_file(user,buffer,sizeof(buffer));
-            break;
-        case CMD_RENAME:
-        case CMD_MV:
-            user_rename_file(user,buffer,sizeof(buffer));
-            break;
-        case CMD_LIST:
-            user_basic_list_file(user);
-            break;
-        case CMD_RUN:
-            user_basic_run_file(user,buffer,sizeof(buffer));
-            break;
-        case CMD_FREEMEM:
-            user_free_basic_memory(user);
-            break;
-        case CMD_LIBRARY:
-            user_display_library(user);
-            break;
-        case CMD_GET:
-            user_get_library_entry(user,buffer,sizeof(buffer));
-            break;
-        case CMD_KILL:
-            user_kill_task(user,buffer,sizeof(buffer));
-            break;
-        case CMD_READ:              // read a document file
-            user_more_file(user,buffer,sizeof(buffer));
-            break;
-        default:
-            user_unknown_command(user,buffer,sizeof(buffer));
-            break;
-    }
-}

@@ -14,7 +14,7 @@ key words
 
 functions
     rnd
-    usr   to be removed for our use
+    usr   use available extensions for tiny basic
 
 operators
     ()
@@ -30,7 +30,7 @@ usr(255)                        watch point set watch point
 usr(256)                        cold start, rest and cold start
 usr(259)                        warm start, start running at last break
 usr(262)                        call the input character sub 
-usr(265)                        call the output charater subrutine
+usr(265)                        call the output charater subroutine
 usr(268)                        break execution
 usr(273,start,end)              dump core memory in hex
 usr(276),address)               get byte from core at address

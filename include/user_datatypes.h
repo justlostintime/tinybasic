@@ -69,6 +69,7 @@ typedef struct user_context {
     bool ExitWhenDone;               // when set the interpreter will return when exection completes
     bool persist;                    // set for users that are not deleted
     bool echo;                       // turns the interpreter echo when reading from character on/off
+    bool runafterload;               // set to run the program after loading it from file
     bool escape_mode;                // set when input is processing escape chars
     bool display_who;                // provides shortcut to display who is logged on
 

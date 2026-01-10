@@ -9,7 +9,7 @@
 
 void init_filesys(void);
 int close_filesys(void);
-FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen, bool as_root);
+FRESULT display_directory(user_context_t *user, char *dirpath, bool as_root);
 bool user_create_home_directory(user_context_t *user);
 FRESULT user_create_directory(user_context_t *user, char *dirname);
 FRESULT user_remove_directory(user_context_t *user, char *dirname);

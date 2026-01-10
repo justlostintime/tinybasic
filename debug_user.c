@@ -1,4 +1,5 @@
 #include "user.h"
+
 extern char *status_text[];
 user_context_t *debug_session;
 

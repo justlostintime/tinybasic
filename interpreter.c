@@ -87,52 +87,58 @@ aByte DeCaps[128];        /* capitalization table */
 //FileType oFile = NULL;  /* from option '-o' or user menu/button */
 #define oFile user->i_oFile
 
-/************************* Memory Utilities.. *************************/
+//************************* Memory Utilities.. ************************
 
-void Poke2(user_context_t *user,int loc, int valu) {               /* store integer as two bytes */
-  Core[loc] = (aByte)((valu>>8)&255);         /* nominally Big-Endian */
+void Poke2(user_context_t *user,int loc, int valu) {      // store integer as two bytes
+  Core[loc] = (aByte)((valu>>8)&255);                     // nominally Big-Endian
   Core[loc+1] = (aByte)(valu&255);
 }           /* ~Poke2 */
 
-int Peek2(user_context_t *user,int loc) {                          /* fetch integer from two bytes */
+int Peek2(user_context_t *user,int loc) {                 // fetch integer from two bytes
   return ((int)Core[loc])*256 + ((int)Core[loc+1]);
 } /* ~Peek2 */
 
 //************************** I/O Utilities... **************************
 
-void Ouch(user_context_t *user,char ch) {                         /* output char to stdout */
-  if (oFile != NULL) {                       /* there is an output file.. */
+void Ouch(user_context_t *user,char ch) {                 // output char to stdout
+  if (oFile != NULL) {                                    // there is an output file..
     if (ch>=' ') OutFileChar(oFile,ch);
     else if (ch == '\r') OutFileChar(oFile,'\n');
     if(user->echo==false) return;
   }
   
   if (ch=='\r') {
-    Core[TabHere] = 0;                    /* keep count of how long this line is */
+    Core[TabHere] = 0;                        // keep count of how long this line is
     ScreenChar(user,'\n');
     ScreenChar(user,'\r');}
-  //else if (ch>=' ') if (ch<='~') {           /* ignore non-print control chars */
+  //else if (ch>=' ') if (ch<='~') {          // ignore non-print control chars
   else {
     Core[TabHere]++;
     ScreenChar(user,ch);
   }
 } // ~Ouch
 
-char Inch(user_context_t *user) {                            /* read input character from stdin or file */
+char Inch(user_context_t *user) {             // read input character from stdin or file
   char ch;
-  if (inFile != NULL) {                      /* there is a file to get input from.. */
+  if (inFile != NULL) {                       // there is a file to get input from..
     ch = InFileChar(user,inFile);
     if (ch == '\n') ch = '\r';
-    if (ch == '\0') {                        /* switch over to console input at eof */
+    if (ch == '\0') {                         // switch over to console input at eof
       IoFileClose(inFile);
       free(inFile);
       inFile = NULL;
-      user_write(user,"\n\r");       /* notify user of eof on file */
-      if(user->ExitWhenDone) {
-        user->ExitWhenDone = false;
-        user->level=user_shell;
-        user->echo = true;
-        SwitchUser = true;
+      user_write(user,"\n\r");                  // notify user of eof on file
+      if(user->runafterload) {                  // if set to run after load then do so now
+        user_push_input_buffer(user,"RUN\r");   // push the run command onto the input buffer
+        user->level=user_basic;                 // run the program
+        user->runafterload = false;
+      } else {
+        if(user->ExitWhenDone) {
+          user->ExitWhenDone = false;
+          user->level=user_shell;
+          user->echo = true;
+          SwitchUser = true;
+        }
       }
     }
     else {

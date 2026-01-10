@@ -106,7 +106,7 @@ bool user_create_home_directory(user_context_t *user) {
         return false;
     }
 
-    snprintf(path,sizeof(path),"/user/%s-%s",user->username,user->password);
+    snprintf(path,sizeof(path),"/home/%s-%s",user->username,user->password);
     
     FRESULT res = f_mkdir(path);
     if (res == FR_OK || res == FR_EXIST) {
@@ -201,20 +201,17 @@ FRESULT user_rename_user_file(user_context_t *user, char *sourcefile, char *dest
     }
 }   
 
-FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen, bool as_root){
+FRESULT display_directory(user_context_t *user, char *dirname, bool as_root){
    
     FRESULT res;
     DIR dir;
     FILINFO fno;
     int nfile, ndir;
     char path[128]; 
-    char dirname[128];
-    dirname[0]='\0';
     path[0]='\0';
     char buffer[128];
 
-    sscanf(cmdline,"%s %s",buffer,dirname);
-    strncpy(path,dirname,sizeof(path));
+    strncpy(path,dirname,sizeof(path)-1);
     if(!as_root) user_set_file_path(user,path,sizeof(path));
 
     snprintf(buffer,sizeof(buffer),"Directory listing for %s\n\r",path);
@@ -253,6 +250,7 @@ FRESULT display_directory(user_context_t *user, char *cmdline, int cmdlen, bool 
 
     return FR_OK;
 }
+
 #define BUFFER_SIZE 512
 
 FRESULT Copy_file(user_context_t *user, const char* source_file, const char* dest_file){

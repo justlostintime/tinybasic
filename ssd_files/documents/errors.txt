@@ -48,10 +48,6 @@
 296   Syntax error - expects ")"
 298   Memory overflow (in USR)
 303   Expression too complex (in USR)
-
-
-                                  14
-
 304   Memory overflow (in function evaluation)
 306   Syntax error - expects "(" for function arguments
 330   IF syntax error - expects relation operator
