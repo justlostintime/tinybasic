@@ -259,6 +259,8 @@ void user_cleanup_disconnected_sessions(user_context_t *send_to) {
 
 // help command
 const char * user_help_text[] = {"Timeshare Commands (case is ignored), Parameters with [ ] are optional\n\r",
+                                "  home or ctrl-home or home to see who is logged in and other system info\n\r",
+                                "  end or ctrl-end to stop execution of basic program\n\r",
                                 "Shell commands:\n\r",
                                 "  Who - see who is logged on\n\r",
                                 "  Free - See amount of available memory\n\r",

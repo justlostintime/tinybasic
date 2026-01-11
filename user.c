@@ -313,7 +313,7 @@ user_context_t *login_user(user_context_t *user) {
         if(existing_user == NULL) {
             char dir_password[128];
             if(exists_home(user,username,dir_password,sizeof(dir_password))) {
-                printf("checking if user exists %s-%s\n",username,password);
+                //printf("checking if user exists %s-%s\n",username,password);
                 if(strcmp(password,dir_password) != 0) {
                     snprintf(buffer,sizeof(buffer),"User exists but password is incorrect\n\r",username);
                     user_write(user,buffer);
@@ -435,7 +435,12 @@ void process_escape_commands(user_context_t *user,int16_t value) {
         case 'B':               //  down arrow
         case 'C':               //  right arrow
         case 'D':               //  left arrow
+            break;
+
         case 'F':               //  end key
+            user->i_Broken = true;
+            user->escape_mode = false;
+            break;
              
         case '~':               //  most other keys
                 user->escape_mode = false;
@@ -524,19 +529,26 @@ bool user_add_char_to_input_buffer(user_context_t *user, int value) {
     if(user->telnet_prev == 13 && value == 0) { // sometimes telnet sends a 0 after a \r
         user->telnet_prev = 13; 
     } else {
-        user->telnet_prev = value;
-        user->linebuffer[user->lineIndex] = (char)value;
-        int newindex  = user->lineIndex+1;   
-        //printf("\nadd_char %2x, lineIndex %d, pending count %d, readpos %d\n",value,user->lineIndex,user->pending_console_read,user->lineReadPos);
-        if(newindex > sizeof(user->linebuffer)-1) {
-            newindex = 0;               // wrap it around
-        }
-        //printf("\n0 add_char %2x, lineIndex %d, pending count %d, readpos %d\n",value,user->lineIndex,user->pending_console_read,user->lineReadPos);
-        if(newindex != user->lineReadPos) {          //the buffer is full what to do!!
-            user->lineIndex = newindex;
-            user->pending_console_read++;           // tracks the number of bytes available to read
+        if(value == '\b' || value == 0x7F) {                        // backspace or delete
+            if(user_remove_char_from_buffer(user)) {    // nothing to do if nothing in the buffer
+                user_write(user,"\b \b");  
+            }                             // erase the character on the console
         } else {
-            result = true;
+            echoUserChar(user, value);          // echo the character back to the user
+            user->telnet_prev = value;
+            user->linebuffer[user->lineIndex] = (char)value;
+            int newindex  = user->lineIndex+1;   
+            //printf("\nadd_char %2x, lineIndex %d, pending count %d, readpos %d\n",value,user->lineIndex,user->pending_console_read,user->lineReadPos);
+            if(newindex > sizeof(user->linebuffer)-1) {
+                newindex = 0;               // wrap it around
+            }
+            //printf("\n0 add_char %2x, lineIndex %d, pending count %d, readpos %d\n",value,user->lineIndex,user->pending_console_read,user->lineReadPos);
+            if(newindex != user->lineReadPos) {          //the buffer is full what to do!!
+                user->lineIndex = newindex;
+                user->pending_console_read++;           // tracks the number of bytes available to read
+            }else {
+                result = true;
+            }
         }
     }
 
@@ -629,11 +641,13 @@ int echoUserChar(user_context_t *user, int c) {
     if(user->state.client_pcb == NULL ) {
         putchar(c);
     } else {
-        char buff[2];
-        buff[0] = (char)c;
-        buff[1] = '\n';
-        tcp_server_send_msg_len(user, buff,c == '\r' ? 2 : 1);
-        tcp_server_flush(user);  // flush the buffer
+        if(user->telnet_will_echo) {
+            char buff[2];
+            buff[0] = (char)c;
+            buff[1] = '\n';
+            tcp_server_send_msg_len(user, buff,c == '\r' ? 2 : 1);
+            tcp_server_flush(user);  // flush the buffer
+        }
     }
 }
 

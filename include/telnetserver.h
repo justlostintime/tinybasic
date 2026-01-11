@@ -1,5 +1,8 @@
 #ifndef TELNETSERVER_H  
 #define TELNETSERVER_H
+
+#define TELNET_DEBUG 0
+
 /*
 Telnet commands and options
 Last Updated

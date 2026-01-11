@@ -16,7 +16,8 @@
 #include "telnetserver.h"
 
 static const uint8_t telnet_default_options[] = {
-	IAC, TELNET_DO, TO_SUP_GA,
+	IAC, TELNET_WILL, TO_ECHO,							// this turns off the echo from the telnet client
+	IAC, TELNET_WILL, TO_SUP_GA,						// we will suppress go ahead which also turn on character mode must be this order	
 	IAC, TELNET_WILL, TO_NAWS,
 	IAC, TELNET_DO, TO_NAWS
 };
@@ -71,22 +72,29 @@ void telnet_no_echo_request(user_context_t * user) {
 void telnet_process_cmd(user_context_t * user)
 {
 	int resp = -1;
-	//printf("telnet command recieved IAC %2X %2X\r\n",user->telnet_cmd,user->telnet_opt);
+
+#if TELNET_DEBUG==1
+	printf("telnet command recieved IAC %2X %2X\r\n",user->telnet_cmd,user->telnet_opt);
+#endif
+
 	switch(user->telnet_cmd) {
 	case TELNET_SB:
 		switch(user->telnet_opt) {
 		case TO_NAWS:
 			// we can process NAWS here if we want to know window size
 			// but for now we just ignore it
-			//printf("telnet NAWS subnegotiation recieved %02X %02X%02X%02X%02X%02X%02X\r\n",
-			//		user->telnet_opt,
-			//		user->telnet_sb_buffer[0],
-			//		user->telnet_sb_buffer[1],
-			//		user->telnet_sb_buffer[2],
-			//		user->telnet_sb_buffer[3],
-			//		user->telnet_sb_buffer[4],
-			//		user->telnet_sb_buffer[5]
-			//		);
+
+#if TELNET_DEBUG==1
+			printf("telnet NAWS subnegotiation recieved %02X %02X%02X%02X%02X%02X%02X\r\n",
+					user->telnet_opt,
+					user->telnet_sb_buffer[0],
+					user->telnet_sb_buffer[1],
+					user->telnet_sb_buffer[2],
+					user->telnet_sb_buffer[3],
+					user->telnet_sb_buffer[4],
+					user->telnet_sb_buffer[5]
+					);
+#endif
 			user->term.cols = (user->telnet_sb_buffer[0] << 8) | user->telnet_sb_buffer[1];
 			user->term.rows = (user->telnet_sb_buffer[2] << 8) | user->telnet_sb_buffer[3];
 			//printf("telnet NAWS cols=%d rows=%d\r\n",user->term.cols, user->term.rows);		
@@ -107,7 +115,8 @@ void telnet_process_cmd(user_context_t * user)
 	case TELNET_DO:
 		switch (user->telnet_opt) {
 		case TO_ECHO:
-			resp = TELNET_WONT;       // we will not support echo
+			resp = TELNET_WILL;       		// we will support echo
+			user->telnet_will_echo = true; // set that the server will echo characters
 			break;
 
 		case TO_BINARY:
@@ -158,7 +167,10 @@ void telnet_process_cmd(user_context_t * user)
 
 	if (resp >= 0) {
 		uint8_t buf[3] = { IAC, resp, user->telnet_opt };
-		//printf("telnet sending response %2X %2X %2X\r\n",buf[0],buf[1],buf[2]);
+
+#if TELNET_DEBUG==1
+		printf("telnet sending response %2X %2X %2X\r\n",buf[0],buf[1],buf[2]);
+#endif
 		tcp_server_send_msg_len(user, buf, 3);
         tcp_server_flush(user);
 	}

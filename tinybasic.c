@@ -263,7 +263,7 @@ void Console_Data_Available(void *param) {
         return;
     }
 
-    if(value == '\b' || value == 0x7F) {                    // backspace or delete
+    /* if(value == '\b' || value == 0x7F) {                    // backspace or delete
         if(!user_remove_char_from_buffer(user)) return;     // nothing to do if nothing in the buffer
         user_write(user,"\b \b");                           // erase the character on the console
         
@@ -271,11 +271,12 @@ void Console_Data_Available(void *param) {
         //printf("got %2X\n\r",value);
 
         if((value >= 32 && value <= 126) || value == '\r') { // printable characters only
-            putchar(value);          // echo to the terminal
-            if(value == '\r') putchar( '\n');
+            // putchar(value);          // echo to the terminal
+            // if(value == '\r') putchar( '\n');
         }
+    */
         user_add_char_to_input_buffer(user,value);          // we must do something now for basic to work;
-    }
+    // }
 }
 
 int main() {

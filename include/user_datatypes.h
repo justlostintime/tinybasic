@@ -103,7 +103,8 @@ typedef struct user_context {
     int16_t  telnet_opt;
     int16_t  telnet_prev;
     int16_t  telnet_state;              // used when processing telnet commands
-    int16_t  telnet_sb_index;          // index into the subnegotiation buffer
+    int16_t  telnet_sb_index;           // index into the subnegotiation buffer
+    bool     telnet_will_echo;          // set when the telnet client will echo characters
 
     // terminal control variables
     terminal_t term;                    // terminal management
