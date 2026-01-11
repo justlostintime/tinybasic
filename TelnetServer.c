@@ -13,7 +13,11 @@
 #include "hw_config.h"
 #include "sd_card.h"
 #include "user.h"
+#include "terminal.h"
 #include "telnetserver.h"
+
+extern user_context_t *RootUser;         // Pointer to the root user
+extern user_context_t *DebugUser;        // Pointer to the debug user
 
 static const uint8_t telnet_default_options[] = {
 	IAC, TELNET_WILL, TO_ECHO,							// this turns off the echo from the telnet client
@@ -26,7 +30,7 @@ int init_telnet_server(char *ssid, char *password)
 {
 // Initialise the Wi-Fi chip
     if (cyw43_arch_init()) {
-        printf("Wi-Fi init failed\n");
+        printf("Wi-Fi init failed\n\r");
         return -1;
         }
     //printf("Wi-Fi init succeeded\n");
@@ -37,26 +41,26 @@ int init_telnet_server(char *ssid, char *password)
     //printf("Connecting to Wi-Fi...'%s','%s'\n",ssid,password);
 
     if (cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
-        printf("failed to connect.\n");
+        printf("failed to connect.\n\r");
         return -1;
     } else {
     	//    printf("Connected.\n");
         // Read the ip address in a human readable way
         uint8_t *ip_address = (uint8_t*)&(cyw43_state.netif[0].ip_addr.addr);
-        printf("IP address %d.%d.%d.%d\n", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
+        printf("IP address %d.%d.%d.%d\n\r", ip_address[0], ip_address[1], ip_address[2], ip_address[3]);
     }
 
     // Start the root tcp connection
     user_context_t *user = tcp_server_init();
     if (!user) {
-        printf("root TCP init failed\n");
+        printf("Root TCP init failed\n");
     // } else {
     //    printf("Starting root TCP server\n");
     return -1;
     }
 
     if (!tcp_server_open(user)) {
-        printf("root TCP server open failed\n");
+        printf("Root TCP server open failed\n");
     //   tcp_server_result(user, -1,"init_telnet_server : open failed");
     //} else {
     //    printf("root TCP server open succeeded\n");
@@ -74,7 +78,7 @@ void telnet_process_cmd(user_context_t * user)
 	int resp = -1;
 
 #if TELNET_DEBUG==1
-	printf("telnet command recieved IAC %2X %2X\r\n",user->telnet_cmd,user->telnet_opt);
+	terminal_printf(RootUser,"telnet %s : command recieved IAC %2X %2X\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)),user->telnet_cmd,user->telnet_opt);
 #endif
 
 	switch(user->telnet_cmd) {
@@ -85,7 +89,7 @@ void telnet_process_cmd(user_context_t * user)
 			// but for now we just ignore it
 
 #if TELNET_DEBUG==1
-			printf("telnet NAWS subnegotiation recieved %02X %02X%02X%02X%02X%02X%02X\r\n",
+			terminal_printf(RootUser,"telnet NAWS subnegotiation recieved %02X %02X%02X%02X%02X%02X%02X\r\n",
 					user->telnet_opt,
 					user->telnet_sb_buffer[0],
 					user->telnet_sb_buffer[1],
@@ -97,10 +101,13 @@ void telnet_process_cmd(user_context_t * user)
 #endif
 			user->term.cols = (user->telnet_sb_buffer[0] << 8) | user->telnet_sb_buffer[1];
 			user->term.rows = (user->telnet_sb_buffer[2] << 8) | user->telnet_sb_buffer[3];
-			//printf("telnet NAWS cols=%d rows=%d\r\n",user->term.cols, user->term.rows);		
+
+#if TELNET_DEBUG==1
+			terminal_printf(RootUser,"telnet %s : NAWS cols=%d rows=%d\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)),user->term.cols, user->term.rows);
+#endif	
 			break;
 		default:
-			printf("telnet Unknown subnegotiation option %2X\r\n",user->telnet_opt);
+			terminal_printf(RootUser,"telnet %s : Unknown subnegotiation option %2X\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)),user->telnet_opt);
 		}
 
 		break;
@@ -162,14 +169,16 @@ void telnet_process_cmd(user_context_t * user)
 		break;
 
 	default:
-        printf("telnet Unknown command %2X %2X\r\n",user->telnet_cmd, user->telnet_opt);
+        terminal_printf(RootUser,"telnet Unknown command %2X %2X\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)),
+						user->telnet_cmd, user->telnet_opt);
 	}
 
 	if (resp >= 0) {
 		uint8_t buf[3] = { IAC, resp, user->telnet_opt };
 
 #if TELNET_DEBUG==1
-		printf("telnet sending response %2X %2X %2X\r\n",buf[0],buf[1],buf[2]);
+		terminal_printf(RootUser,"telnet %s : sending response %2X %2X %2X\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)),
+						buf[0],buf[1],buf[2]);
 #endif
 		tcp_server_send_msg_len(user, buf, 3);
         tcp_server_flush(user);
@@ -218,7 +227,7 @@ void telnet_process_state(user_context_t *user, int value)
 					user->telnet_sb_buffer[user->telnet_sb_index++] = (char)c;
 					user->telnet_sb_buffer[user->telnet_sb_index] = '\0';
 				} else {
-					printf("telnet subnegotiation buffer overflow\r\n");
+					terminal_printf(RootUser,"telnet %s : subnegotiation buffer overflow\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)));
 				}
 				if (c == IAC)					// possible end of subnegotiation
 					user->telnet_state = 4;
@@ -235,7 +244,7 @@ void telnet_process_state(user_context_t *user, int value)
 						user->telnet_sb_buffer[user->telnet_sb_index++] = (char)c;
 						user->telnet_sb_buffer[user->telnet_sb_index] = '\0';
 					} else {
-						printf("telnet subnegotiation buffer overflow\r\n");
+						terminal_printf(RootUser,"telnet %s : subnegotiation buffer overflow\r\n",ip4addr_ntoa(&(user->state.client_pcb->remote_ip)));
 					}
 					user->telnet_state = 0;      // end of subnegotiation
 					telnet_process_cmd(user);

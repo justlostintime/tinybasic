@@ -500,6 +500,7 @@ void Interp(user_context_t *user) {
 
     if (StopIt(user)) {
       Broken = false;
+      user->echo=true;
       OutLn(user);
       OutStr(user,"*** User Break ***");
       TBerror(user);}
