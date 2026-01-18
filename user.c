@@ -1,3 +1,7 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+*/
+
 // user fucntions for tinybasic multi-user time share system
 #include <stdio.h>
 #include <malloc.h>
@@ -285,12 +289,14 @@ void hash_it(char *buffer, int len) {
 user_context_t *login_user(user_context_t *user) {
     char buffer[128];
     char userinfo[128];
+    bool HomeExists = false;
 
     if (!user) {
         return NULL;
     }
 
     char logon_type = ':';
+    char logon_delim = ':';
     char username[32];
     char password[32];
 
@@ -298,7 +304,7 @@ user_context_t *login_user(user_context_t *user) {
     user_get_line(user,userinfo,sizeof(userinfo));
 
     // Parse the userinfo string
-    if (sscanf(userinfo, "%31[^:?]%c%31s", username,&logon_type,password) == 3) {
+    if (sscanf(userinfo, "%31[^: ]%c%c%31s", username,&logon_type,&logon_delim,password) == 4) {
     } else {
         return NULL;  // Bad format
     }
@@ -307,7 +313,7 @@ user_context_t *login_user(user_context_t *user) {
 
     //printf("Parsed login info - Username: '%s', Logon Type: '%c', Password: '%s'\n", username, logon_type, password);
 
-    if (logon_type == ':') {
+    if (logon_type == ':' && logon_delim == ':') {
         // System user login
         user_context_t *existing_user = find_user_by_username(username,NULL);
         if(existing_user == NULL) {
@@ -315,17 +321,21 @@ user_context_t *login_user(user_context_t *user) {
             if(exists_home(user,username,dir_password,sizeof(dir_password))) {
                 //printf("checking if user exists %s-%s\n",username,password);
                 if(strcmp(password,dir_password) != 0) {
-                    snprintf(buffer,sizeof(buffer),"User exists but password is incorrect\n\r",username);
+                    snprintf(buffer,sizeof(buffer),"Ex - password is incorrect\n\r",username);
                     user_write(user,buffer);
+                    user->failed_logins++;
                     return (user_context_t *)NULL; // Invalid password and user combination    
                 }
+            } else {
+                HomeExists = true;
             }
         }
 
         if (existing_user) {
             if (strncmp(existing_user->password, password, sizeof(existing_user->password)) != 0){
-                snprintf(buffer,sizeof(buffer),"That user is logged in but passwords do not match\n\r");
+                snprintf(buffer,sizeof(buffer),"Li - passwords do not match\n\r");
                 user_write(user,buffer);
+                user->failed_logins++;
                 return (user_context_t *)NULL; // Invalid password and user combination
             }
             // for now if passwords  match just create a new session for that user, later we can improve this
@@ -360,10 +370,11 @@ user_context_t *login_user(user_context_t *user) {
                     if(!user_create_home_directory(user)) {
                         snprintf(buffer,sizeof(buffer),"Failed to create home directory for user %s\n\r",user->username);
                         user_write(user,buffer);
+                        user->level = user_removed;
                         return NULL;
                     }
                 }  
-                snprintf(buffer,sizeof(buffer),"Welcome with multi logins  %s enjoy your stay\n\r", username);
+                snprintf(buffer,sizeof(buffer),"Welcome with multi logins  %s enjoy your stay!\n\r", username);
                 user_write(user,buffer);
                 update_user_activity(user);
                 return user;
@@ -375,24 +386,26 @@ user_context_t *login_user(user_context_t *user) {
             user->username[sizeof(user->username) - 1] = '\0';
             strncpy(user->password, password, sizeof(user->password) - 1);
             user->password[sizeof(user->password) - 1] = '\0';
-            if(!user->SystemUser) {
+            if(!user->SystemUser && !HomeExists) {
                 // create home directory for user
                 if(!user_create_home_directory(user)) {
                     snprintf(buffer,sizeof(buffer),"Failed to create home directory for user %s\n\r",user->username);
                     user_write(user,buffer);
+                    user->level = user_removed;
                     return NULL;
                 }
             }  
-            snprintf(buffer,sizeof(buffer),"Welcome  %s enjoy your stay\n\r", username);
+            snprintf(buffer,sizeof(buffer),HomeExists ? "Welcome  %s enjoy your stay!\n\r":"Welcome back %s We saved your files for you!\n\r", username);
             user_write(user,buffer);
             update_user_activity(user);
             return user;
         }
     }
 
-    snprintf(buffer,sizeof(buffer),"Login failed due to bad format: '%s'\n\r", userinfo);
+    snprintf(buffer,sizeof(buffer),"Login failed: '%s'\n\r", userinfo);
     user_write(user,buffer);
-    return (user_context_t *)false;  // probably a bad logon format
+    user->failed_logins++;
+    return (user_context_t *)NULL;  // probably a bad logon format
 }
 
 bool end_user_session(struct tcp_pcb *tpcb){
@@ -639,6 +652,8 @@ bool user_char_available( user_context_t *user) {
 
 int echoUserChar(user_context_t *user, int c) {
     if(user->state.client_pcb == NULL ) {
+        if(c == '\r')
+            putchar('\n');
         putchar(c);
     } else {
         if(user->telnet_will_echo) {

@@ -176,7 +176,7 @@ err_t tcp_server_send_data(void *arg,char *senddata, int len)
         //printf("Data Written\r\n");
         user->WaitingWrite = io_waiting;   // debug mod bg
     }
-
+    update_user_activity(user);
     return err;
 }
 
@@ -213,19 +213,20 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
     TCP_SERVER_T *state = &user->state;
 
     if (!p) {
-        DEBUG_printf("tcp_server_recv: remote closed %s uid %d error %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,err);
+        printf("tcp_server_recv: remote closed %s uid %d error %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port,err);
         if(err == 0) {
             err = ERR_OK;
-            DEBUG_printf("Closing connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
+            printf("Closing connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
             user->level=user_removed;
         } else {
             err = ERR_ABRT;
-            DEBUG_printf("Aborting connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
+            printf("Aborting connection to %s uid %d\n",ip4addr_ntoa(&(tpcb->remote_ip)),tpcb->remote_port);
             user->level=user_removed;
         }
 
         return err;   // tcp_server_result(user, err, "tcp_server_recv: remote closed");
     }
+
     // this method is callback from lwIP, so cyw43_arch_lwip_begin is not required, however you
     // can use this method to cause an assertion in debug mode, if this method is called when
     // cyw43_arch_lwip_begin IS needed
@@ -254,6 +255,7 @@ err_t tcp_server_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err
 
     DEBUG_printf("Basic Program Buffer Recieved : %s\n",user->linebuffer);
     state->recv_len = 0;
+    update_user_activity(user);
     return ERR_OK;
 }
 
@@ -282,7 +284,7 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
         return ERR_OK;
     }
 
-    DEBUG_printf("Client connected %s : uid %d : pcbid : %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+    printf("Client connected %s : uid %d : pcbid : %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
    
     // create a new user to use this pcb
     user_context_t * new_user = create_user_context(user->state.server_pcb, client_pcb, false);
@@ -312,7 +314,7 @@ err_t tcp_server_accept(void *arg, struct tcp_pcb *client_pcb, err_t err) {
     // cyw43_arch_lwip_end();
 
     if(add_user_to_waiting(new_user)) {
-        DEBUG_printf("User context added to waiting list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
+        printf("User context added to waiting list for %s uid %d id %8X\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
     } else {
         printf("Failed to add user context to waiting list for %s uid %d id %8H\n",ip4addr_ntoa(&(client_pcb->remote_ip)),client_pcb->remote_port,client_pcb);
         delete_user_context(new_user);

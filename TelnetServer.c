@@ -1,3 +1,6 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+*/
 
 #include <stdio.h>
 #include "pico/stdlib.h"
@@ -38,7 +41,7 @@ int init_telnet_server(char *ssid, char *password)
     // Enable wifi station
     cyw43_arch_enable_sta_mode();
 
-    //printf("Connecting to Wi-Fi...'%s','%s'\n",ssid,password);
+    printf("Connecting to Wi-Fi...'%s','%s'\n",ssid,password);
 
     if (cyw43_arch_wifi_connect_timeout_ms(ssid, password, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
         printf("failed to connect.\n\r");

@@ -1,3 +1,9 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed. */
 #ifndef USER_H
 #define USER_H
 
@@ -77,6 +83,7 @@ bool user_logoff(user_context_t *user);
 void clear_console_buffer(user_context_t *user);
 bool exists_home(user_context_t *user, char *username, char *password, int dirpwlen);
 bool user_create_home_directory(user_context_t *user);
+bool is_user_timed_out(user_context_t *user);
  
 
 #ifdef __cplusplus

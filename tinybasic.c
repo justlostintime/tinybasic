@@ -1,3 +1,7 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+*/
+
 #include <stdio.h>
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
@@ -42,7 +46,7 @@ uint64_t Process_time_core0 = 0;            // the total process time used by co
 uint64_t Process_time_core1 = 0;            // the total process time used by core 1 ms
 char *tinybasicIL = NULL;                   // pointer to the tinybasic IL code
 
-const char * Greeting = "Welcome to TinyBasic 1.0 Timeshare server\n\rlogon format 'name:password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rLog in : ";
+const char * Greeting = "Welcome to TinyBasic 1.0 Timeshare server\n\rlogon format 'name::password'\n\rDO NOT ENTER ANY PRIVATE OR IDENTIFIABLE INFORMATION!!\n\rLog in : ";
 const char * UserLogin = "Log in : ";
 const char * UserPrompt = " > ";
 bool display_who = false;
@@ -123,8 +127,8 @@ void main_user_loop() {
                 user = get_next_waiting();
                 if(user == NULL) break;
                 add_user_to_list(user);
-            //    printf("%15s uid(%8X) %s\n",(user->username[0] == '\0' ? "New User": user->username) ,
-            //              user->state.client_pcb,(user->SystemUser ? "System User" : "Normal User"));
+                //printf("%15s uid(%8X) %s\n",(user->username[0] == '\0' ? "New User": user->username) ,
+                //          user->state.client_pcb,(user->SystemUser ? "System User" : "Normal User"));
             }   
             //printf(" : Transfer Complete\n");
         }
@@ -132,6 +136,13 @@ void main_user_loop() {
         user = get_user_list();
 
         while(user){
+
+            // check for user timeout
+            if(!user->persist && is_user_timed_out(user)) {
+                debugger_message(user,"User timed out due to inactivity, disconnecting");
+                user_write(user,"User timed out due to inactivity, disconnecting\n\r");
+                user->level = user_removed;
+            }
 
             if(user->display_who) {         // always immediate response
                 user_who(user);
@@ -141,6 +152,7 @@ void main_user_loop() {
             switch(user->level) {
                 case user_new_connect:
                     if(user->state.client_pcb) {
+                        terminal_clear(user);
                         user_write(user,(char *)Greeting);
                         user->level = user_wait_loggin;         // bump to wait login
                         user->WaitingRead = io_waiting;
@@ -151,10 +163,11 @@ void main_user_loop() {
                     {
                         user_context_t *new_user;
                         if(user->WaitingRead == io_complete) {      // we have something to proceess
-                           // printf("Login attempt from client %s port %d id %8X\n",
-                           //        ip4addr_ntoa(&user->state.client_pcb->remote_ip),
-                           //        user->state.client_pcb->remote_port,
-                           //        user->state.client_pcb);
+                           printf("Login attempt %d from client %s port %d id %8X\n",
+                                user->failed_logins+1,
+                                ip4addr_ntoa(&user->state.client_pcb->remote_ip),
+                                user->state.client_pcb->remote_port,
+                                user->state.client_pcb);
                             new_user = login_user(user);
                             if(new_user)  {
                                 debugger_message(new_user,"Logged in");
@@ -174,7 +187,13 @@ void main_user_loop() {
                                 user_write(user,(char *)UserPrompt);
 
                             } else {
-                                user_write(user,(char *)UserLogin);
+                                if(user->failed_logins >= 3) {
+                                    debugger_message(user,"Too many failed login attempts, disconnecting");
+                                    user_write(user,"Too many failed login attempts, disconnecting\n\r");
+                                    user->level = user_removed;
+                                } else {    
+                                    user_write(user,(char *)UserLogin);
+                                }
                             }
                             user->WaitingRead = io_waiting;
                         }
@@ -353,8 +372,9 @@ int main() {
     // printf("USB Clock Frequency is %d Hz\n", clock_get_hz(clk_usb));
     // For more examples of clocks use see https://github.com/raspberrypi/pico-examples/tree/master/clocks
     
-    init_telnet_server(ssid_string,password_string);  // user and pwd in /system/wifi.config
-
+    if (init_telnet_server(ssid_string,password_string)< 0){  // user and pwd in /system/wifi.config
+        panic("Failed to start telnet server\n\r");
+    }
     // Timer example code - This example fires off the callback after 2000ms
     struct repeating_timer timer,time_slice;
     //add_alarm_in_ms(1000, alarm_callback, NULL, false);

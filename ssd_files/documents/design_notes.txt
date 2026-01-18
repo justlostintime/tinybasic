@@ -1,0 +1,482 @@
+DESIGN NOTES FOR TINY BASIC
+
+by Dennis Allison, happy Lady, & friends
+(reprinted from People's Computer Company Vol. 4, No. 2)
+http://www.ittybittycomputers.com/IttyBitty/TinyBasic/DDJ1/Design.html
+ 
+
+SOME MOTIVATIONS
+A lot of people have just gotten into having their own computer. Often they don't know too much 
+about software and particularly systems software, but would like to be able to program in something
+other than machine language. The TINY BASIC project is aimed at you if you are one of these people.
+Our goals are very limited -- to provide a minimal BASIC-like language for writing simple programs.
+Later we may make it more complicated, but now the name of the game is keep it simple. That translates 
+to a limited language (no floating point, no sines and cosines, no arrays, etc.) and even this is a 
+pretty difficult undertaking.
+Originally we had planned to limit ourselves to the 8080, but with a variety of new machines appearing
+at very low prices, we have decided to try to make a portable TINY BASIC system even at the cost of
+some efficiency. Most of the language processor will be written in a pseudo language which is good for
+writing interpreters like TINY BASIC. This pseudo language (which interprets TINY BASIC) will then itself 
+be implemented interpretively. To implement TINY BASIC on a new machine, one simply writes a simple
+interpreter for this pseudo language and not a whole interpreter for TINY BASIC.
+
+We'd like this to be a participatory design project. This sequence of design notes follows the project which
+ we are doing here at PCC. There may well be errors in content and concept. If you're making a BASIC along 
+ with us, we'd appreciate your help and your corrections.
+
+Incidentally, were we building a production interpreter or compiler, we would probably structure 
+the whole system quite differently. We chose this scheme because it is easy for people to change 
+without access to specialized tools like parser generator programs
+ 
+
+THE TINY BASIC LANGUAGE
+
+There isn't much to it. TINY BASIC looks like BASIC but all variables are integers. There are no functions 
+yet (we plan to add RND, TAB, and some others later) - Statement numbers must be between 1 and 256 so we can 
+store them in a single byte. LIST only works on the whole program. There is no FOR-NEXT statement. We've tried 
+to simplify the language to the point where it will I fit into a very small memory so impecunious, tyros can use the system.
+The boxes shown define the language. The guide gives a quick reference to what we will include. The formal
+grammar defines exactly what is a legal TINY BASIC statement. The grammar is important because our interpreter 
+design will be based upon it
+ 
+
+IT'S ALL DONE WITH MIRRORS---OR HOW TINY BASIC WORKS
+
+All the variables in TINY BASIC: the control information as to which statement is presently being executed and 
+how the next statement is to be found, the return addresses of active GOSUBS -- all this information constitutes
+ the state of the TINY BASIC interpreter.
+There are several procedures which act upon this state. One procedure knows how to execute any TINY BASIC statement.
+ Given the starting point in memory of a TINY BASIC statement, it will execute it changing the state of the 
+ machine as required. For example,
+
+100 LET S = A+6
+
+would change the value of S to the sum of the contents of the variable A and the integer 6, and sets the 
+next line counter to whatever line follows 100, if the line exists.
+A second procedure really controls the interpretation process by telling the line interpreter what to do.
+When TINY BASIC is loaded, this control routine performs some initialization, and then attempts to read 
+a line of information from the console. The characters typed in are saved in a buffer, LBUF. It first checks
+to see if there is a leading line number. If there is, it incorporates the line into the program by first
+deleting the line with the same line number (if it is present) then inserting the new line if it is of
+nonzero length. If there is no line number present, it attempts to execute the line directly. With this 
+strategy, all possible Commands, even LIST and CLEAR and RUN are possible inside programs. Suicidal 
+programs are also certainly possible.
+
+
+TINY BASIC GRAMMAR
+
+The things in bold face stand for themselves. The names in lower case represent classes of things. '::=' 
+is read 'is defined as'. The asterisk denotes zero or more occurances of the object to its immediate left.
+ Parenthesis group objects. e is the empty set. | denotes the alternative (the exclusive-or).
+
+line::= number statement   | statement 
+statement::= 	PRINT expr-list
+IF expression relop expression THEN statement
+GOTO expression
+INPUT var-list
+LET var = expression
+GOSUB expression
+RETURN
+CLEAR
+LIST
+RUN
+END
+expr-list::= (string | expression) (, (string | expression) )*
+var-list::= var (, var)*
+expression::= (+ | - | e) term ((+ | -) term)*
+term::= factor ((* | /) factor)*
+factor::= var | number | (expression)
+var::= A | B | C ..., | Y | Z
+number::= digit digit*
+digit::= 0 | 1 | 2  | ...  | 8 | 9
+relop::= < (> | = | e) | > (< | = | e) | =
+A BREAK from the console will interrupt execution of the program.
+
+IMPLEMENTATION STRATEGIES AND ONIONS
+When you write a program in TINY BASIC there is an abethect machine Which is necessary to execute it. 
+If you had a compiler it would make in the machine language of your computer a program which emulates that
+ abstract machine for your program. An interpreter implements the abstract machine for the entire language 
+ and rather than translating the program once to machine code it translates it dynamically as needed. 
+ Interpreters are programs and as such have their's as abstract machines. One can find a better instruction set 
+ than that of any general purpose computer for writing a particular interpreter. Then one can write an interpreter
+  to interpret the instructions of the interpreter which is interpreting the TINY BASIC program. And if your machine 
+  is micro-programmed (like PACE), the machine which is interpreting the interpreter interpreting the 
+  interpreter interpreting BASIC is in fact interpreted.
+This multilayered, onion-like approach gains two things: the interpreter for the interpreter is smaller and simpler 
+to write then an interpreter for all of TINY BASIC, so the resultant system is fairly portable. Secondly, 
+since the main part of the TINY BASIC is programmed in a highly memory efficient, tailored instruction set, 
+the interpreted TINY BASIC will be smaller than direct coding would allow. The cost is in execution speed,
+ but there is not such a thing as a free lunch.
+
+
+
+
+QUICK REFERENCE GUIDE FOR TINY BASIC
+LINE FORMAT AND EDITING
+* Lines without numbers executed immediately
+* Lines with numbers appended to program
+* Line numbers must be 1 to 255
+* Line number alone (empty line) deletes line
+* Blanks are not significant, but key words must contain no unneeded blanks
+* '¨' deletes last character
+* Xc deletes the entire line
+
+EXECUTION CONTROL
+
+CLEAR delete all lines and data
+RUN run program
+LIST list program
+
+EXPRESSIONS
+ 
+
+Operators
+Arithmetic
++	-
+*	/
+Relational
+>	>=
+<	<=
+=	<>, ><
+Variables
+A...Z (26 only)
+All arithmetic is modulo 215
+(+/- 32767)
+INPUT / OUTPUT
+
+PRINT X,Y,Z
+PRINT 'A STRING'
+PRINT 'THE ANSWER IS'
+INPUT X
+INPUT X,Y,Z
+
+ASSIGNMENT STATEMENTS
+
+LET X=3
+LET X= -3+5*Y
+
+CONTROL STATEMENTS
+
+GOTO X+10
+GOTO 35
+GOSUB X+35
+GOSUB 50
+RETURN
+
+IF X > Y THEN GOTO 30
+
+LINE STORAGE
+
+The TINY BASIC program is stored, except for line numbers, just as it is entered from the console. 
+In some BASIC interpreters, the program is translated into an intermediate form which speeds execution and 
+saves space. In the TINY BASIC environment, the code necessary to provide the transformation would easily 
+exceed the space saved.
+When a line is read in from the console device, it is saved in a 72-byte array called LBUF (Line BUFfer). 
+At the same time, a pointer, CP, is maintained to indicate the next available space in LBUF. Indexing is, of 
+course, from zero.
+
+Delete the leading blanks. If the string matches the BASIC line, advance the cursor over the matched string
+ and execute the next IL instruction. If the match fails, continue at the IL instruction labeled lbl.
+
+The TINY BASIC program is stored as an array called PGM in order of increasing line numbers. A pointer, PGP,
+ indicates the first free place, in the array. PGP=0 indicates an empty program; PGP must be less than the 
+ dimenstion of the array PGM. The PGM array must be reorganized when new lines are added, lines replaced, or 
+ lines we deleted.
+
+Insertion and deletion are carried on simultaneously. When a new line is to be entered, the PGM array 
+searches for a line with a line number greater than or equal to that of the new line. Notice that 
+lines begin at PGM (0) and at PGM (j+1) for every j such that PGM (j)=[carriage return]. If the line 
+numbers are equal, then the length of the existing line is computed. A space equal to the length of the new
+ line is created by moving all lines with line numbers greater than that of the line being inserted up or
+  down as appropriate. The empty line is handled as a special case in that no insertion is made.
+ 
+
+TINY BASIC AS STORED IN MEMORY
+byte in memory treated as an integer
+                           byte treated as a character
+
+a carriage return symbol                        free space
+ 
+ERRORS AND ERROR RECOVERY
+
+There are two places that errors can occur. If they occur in the TINY BASIC system, 
+they must be captured and action taken to preserve the system. If the error occurs in the TINY BASIC
+ program entered by the user, the system should report the error and allow the user to fix his problem. 
+ An error in TINY BASIC can result from a badly formed statement, an illegal action (attempt to divide by zero,
+  for example), or the exhaustion of some resource such as memory space. In any case, the desired response is 
+  some kind of error message. We plan to provide a message of the form:
+!mmm AT nnn
+where mmm is the error number and nnn is the line number at which it occurs. For direct statements, the form will be:
+!mmm
+since there is no line number.
+Some error indications we know we will need are:
+ 
+1 Syntax error	5 RETURN without GOSUB
+2 Missing line	6 Expression too complex
+3 Line number too large	7 Too many lines
+4 Too many GOSUBs	8 Division by zero
+
+THE BASIC LINE EXECUTOR
+
+The execution routine is written in the interpretive language, IL. It consists of a sequence of instructions which may call 
+subroutines written in IL, or invoke special instructions which are really subroutines written in machine language.
+Two different things are going on at the same time. The routines must determine if the TINY BASIC line is a legal one and
+ determine its form according to the grammar; secondly, it must call appropriate action routines to execute the line. 
+ Consider the TINY BASIC statement:
+
+GOTO 100
+At the start of the line, the interpreter looks for BASIC key words (LET, GO, IF, RETURN, etc.) In this case, it finds GO,
+ and then finds TO. By this time it knows that it has found a GOTO statement. It then calls the routine EXPR to obtain
+  the destination line number of the GOTO. The expression routine calls a whole bunch of other routines, eventually leaving 
+  the number 100 (the value of the expression) in a special place, the top of the arithmetic expression stack. Since everything 
+  is legal, the XFER operator is invoked to arrange for the execution of line 100 (if it exists) as the next line to be executed.
+Each TINY BASIC statement is handled similarly. Some procedural section of an IL program corresponds to tests for the statement 
+structure and acts to execute the statement.
+ 
+
+ENCODING
+
+There are a number of different considerations in the TINY BASIC design which fall in this general category. The problem is to
+make efficient use of the bits available to store information without losing out by requiring a too complex decoding scheme.
+In a number of places we have to indicate the end of a string of characters (or else we have to provide for its length somewhere).
+Commonly, one uses a special character (NUL = OOH for example) to indicate the end. This costs one byte per string but is easy to
+check. A better way depends upon the fact that ASCII code does not use the high order bit; normally it is used for parity on 
+transmission. We can use it to indicate the end (that is, last character) of a string. When we process the characters we must
+AND the character with 07FH to scrub off the flag bit.
+
+The interpreter opcodes can be encoded into a single byte. Operations fall into two distinct classes -- those which call
+machine language subroutines, and those which either call or transfer within the IL language itself. The diagram indicates
+one encoding scheme. The CALL operations have been subsumed into the IL instruction set. Addressing is shown to be relative
+to PC for IL operations. Given the current IL program size, this seems adequate. If it is not, the address could be used 
+to index an array with the ML class instructions.
+ 
+
+ONE POTENTIAL IL ENCODING
+
+TINY BASIC INTERPRETIVE OPERATIONS
+ 
+TST lbl,'string' 	delete leading blanks
+If string matches the BASIC line, advance cursor over the
+matched string and execute the next IL instruction If a match fails, 
+execute the IL instruction at the labled lbl.
+CALL lbl	Execute the IL subroutine starting at lbl. Save the IL 
+address following the CALL on the control stack.
+RTN	Return to the IL location specified by the top of the control stack.
+DONE	
+Report a syntax error if after deletion leading blanks the 
+cursor is not positioned to road a carriage return.
+
+JMP
+ lbl	Continue execution of IL at the line specified.
+
+PRS
+	Print characters from the BASIC text up to but not including the 
+closing quote mark. If a cr is found in the program text, report an 
+error. Move the cursor to the point following the closing quote.
+
+PRN
+	Print number obtained by popping the top of the expression stack.
+SPC
+	Insert spaces, to move the print head to next zone.
+NLINE
+	Output CRLF to Printer.
+NXT
+	If the present mode is direct (line number zero), then return to line 
+collection. Otherwise, select the next line and begin interpretation.
+XFER
+	Test valiue at the top of the AE stack to be within range. If not, 
+report an error. If so, attempt to position cursor at that line. 
+If
+ it exists, begin interpretation there; if not report an error.
+SAV	Push present line number on SBRSTK. Report overflow as error.
+RSTR
+	Replace current line number with value on SBRSTK. 
+If stack is empty, report error.
+CMPR
+	Compare AESTK(SP), the top of the stack, with AESTK(SP-2) 
+as per the relations indicated by AESTK(SP-1). Delete all from stack. 
+If the condition specified did not match, then perform NXT action.
+LIT
+ num	Push the number num onto the AESTK (Originally omitted)
+INNUM
+	Read a number from the terminal and push its value onto the AESTK. 
+FIN
+	Return to the line collect routine.
+ERR
+	Report syntax error am return to line collect routine.
+ADD
+	Replace top two elements of AESTK by their sum.
+SUB
+	Replace top two elements of AESTK by their difference.
+NEG
+	Replace top of AESTK with its neqative.
+MUL
+	Replace top two elements of AESTK by their product.
+DIV
+	Replace top two elements of AESTK by their quotient.
+STORE
+	Place the value at the top of the AESTK into the variable 
+designated by the index specified by the value immediately 
+below it. Delete both from the stack.
+TSTV
+ lbl	Test for variable (i.e letter) if present. Place its index value 
+onto the AESTK and continue execution at next suggested 
+location. Otherwise continue at lbl.
+TSTN
+ lbl 	Test for number. Of present, place its value onto the AESTK and 
+continue execution at next suggested location. Otherwise continue at lbl.
+IND
+	Replace top of stack by variable value it indexes.
+LST
+	List the contents of the program area.
+INIT
+	Perform global initilization
+Clears program area, empties GOSUB stack, etc.
+GETLINE
+	Input a line to LBUF.
+TSTL lbl
+	After editing leading blanks, look for a line number. Report error 
+if invalid; transfer to lbl if not present.
+INSRT
+	Insert line after deleting any line with same line number.
+XINIT
+	Perform initialization for each stated execution. Empties AEXP stack.
+
+A STATEMENT EXECUTOR WRITTEN IN IL
+
+This program in IL will execute a TINY BASIC statement. The operators TST, TSTV, TSTN, and PRS
+ all use a cursor to find characters of the TINY BASIC line. Other operations (NXT, XPER) move the 
+ cursor so it points to a TINY BASIC line. [I corrected a few obvious errors, in red -- TP;
+  Jeffrey Henning found a couple more, in green]
+
+;THE IL CONTROL SECTION
+START:  INIT                  ;INITIALIZE
+        NLINE                 ;WRITE CRLF
+CO:     GETLINE               ;WRITE PROMPT AND GET LINE
+        TSTL    XEC           ;TEST FOR LINE NUMBER
+        INSERT                ;INSERT IT (MAY BE DELETE)
+        JMP     CO
+XEC:    XINIT                 ;INITIALIZE
+
+;STATEMENT EXECUTOR
+
+STMT:   TST     S1,'LET'      ;IS STATEMENT A LET
+        TSTV    S17           ;YES, PLACE VAR ADDRESS ON AESTK
+        TST     S17,'='       ;(This line originally omitted)
+        CALL    EXPR          ;PLACE EXPR VALUE ON AESTK
+        DONE                  ;REPORT ERROR IF NOT NEXT
+        STORE                 ;STORE RESULT
+        NXT                   ;AND SEQUENCE TO NEXT
+S1:     TST     S3,'GO'       ;GOTO OT GOSUB?
+        TST     S2,'TO'       ;YES...TO, OR...SUB
+        CALL    EXPR          ;GET LABEL
+        DONE                  ;ERROR IF CR NOT NEXT
+        XPER                  ;SET UP AND JUMP
+S2:     TST     S17,'SUB'     ;ERROR IF NO MATCH
+        CALL    EXPR          ;GET DESTINATION
+        DONE                  ;ERROR IF CR NOT NEXT
+        SAV                   ;SAVE RETURN LINE
+        XPER                  ;AND JUMP
+S3:     TST     S8,'PRINT'    ;PRINT
+S4:     TST     S7,'"'        ;TEST FOR QUOTE
+        PRS                   ;PRINT STRING
+S5:     TST     S6,','        ;IS THERE MORE?
+        SPC                   ;SPACE TO NEXT ZONE
+        JMP     S4            ;YES JUMP BACK
+S6:     DONE                  ;ERROR IF CR NOT NEXT
+        NLINE
+        NXT
+S7:     CALL    EXPR
+        PRN                   ;PRINT IT
+        JMP     S5            ;IS THERE MORE?
+S8:     TST     S9,'IF'       ;IF STATEMENT
+        CALL    EXPR          ;GET EXPRESSION
+        CALL    RELOP         ;DETERMINE OPR AND PUT ON STK
+        CALL    EXPR          ;GET EXPRESSION
+        TST     S17,'THEN'    ;(This line originally omitted)
+        CMPR                  ;PERFORM COMPARISON -- PERFORMS NXT IF FALSE
+        JMP     STMT
+S9:     TST     S12,'INPUT'   ;INPUT STATEMENT
+S10:    TSTV    S17           ;GET VAR ADDRESS (Originally CALL VAR = nonexist)
+        INNUM                 ;MOVE NUMBER FROM TTY TO AESTK
+        STORE                 ;STORE IT
+        TST     S11,','       ;IS THERE MORE?
+        JMP     S10           ;YES
+S11:    DONE                  ;MUST BE CR
+        NXT                   ;SEQUENCE TO NEXT
+S12:    TST     S13,'RETURN'  ;RETURN STATEMENT
+        DONE                  ;MUST BE CR
+        RSTR                  ;RESTORE LINE NUMBER OF CALL
+        NXT                   ;SEQUENCE TO NEXT STATEMENT
+S13:    TST     S14,'END'
+        FIN
+S14:    TST     S15,'LIST'    ;LIST COMMAND
+        DONE
+        LST
+        NXT
+S15:    TST     S16,'RUN'     ;RUN COMMAND
+        DONE
+        NXT
+S16:    TST     S17,'CLEAR'   ;CLEAR COMMAND
+        DONE
+        JMP     START
+
+S17:    ERR                   ;SYNTAX ERROR
+
+EXPR:   TST     E0,'-'
+        CALL    TERM          ;TEST FOR UNARY -.
+        NEG                   ;GET VALUE
+        JMP     E1            ;NEGATE IT
+E0:     TST     E1A,'+'       ;LOOK FOR MORE
+E1A:    CALL    TERM          ;TEST FOR UNARY +
+E1:     TST     E2,'+'        ;LEADING TERM
+        CALL    TERM
+        ADD
+        JMP     E1
+E2:     TST     E3,'-'        ;ANY MORE?
+        CALL    TERM          ;DIFFERENCE TERM
+        SUB
+        JMP     E1
+E3:T2:  RTN                   ;ANY MORE?
+TERM:   CALL    FACT
+TO:     TST     T1,"*"
+        CALL    FACT          ;PRODUCT FACTOR.
+        MUL
+        JMP     T0
+T1:     TST     T2,'/'
+        CALL    FACT          ;QUOTIENT FACTOR.
+        DIV
+        JMP     T0
+
+FACT:   TSTV    F0
+        IND                   ;YES, GET THE VALUE.
+        RTN
+F0:     TSTN    F1            ;NUMBER, GET ITS VALUE.
+        RTN
+F1:     TST     F2,'('        ;PARENTHESIZED EXPR.
+        CALL    EXPR
+        TST     F2,')'
+        RTN
+F2:     ERR                   ;ERROR.
+
+RELOP:  TST     RO,'='
+        LIT     0             ;=
+        RTN
+R0:     TST     R4,'<'
+        TST     R1,'='
+        LIT     2             ;<=
+        RTN
+R1:     TST     R3,'>'
+        LIT     3             ;<>
+        RTN
+R3:     LIT     1             ;<
+        RTN
+R4:     TST     S17,'>'
+        TST     R5,'='
+        LIT     5             ;>=
+        RTN
+R5:     TST     R6,'<'
+        LIT     3
+        RTN                   ;(This line originally omitted)
+R6:     LIT     4
+        RTN

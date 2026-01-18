@@ -1,3 +1,7 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+*/
+
 /* Tiny Basic Intermediate Language Interpreter -- 2004 July 19 */
 
 #include <stdio.h>
@@ -19,7 +23,7 @@ extern  bool SwitchUser;                  // set when this users time slot is fi
 
 /* File input/output function macros (adjust for C++ framework) */
 #define IoFileClose(fi)          f_close(fi)
-#define InFileChar(user,fi)           CfileRead(user,fi)
+#define InFileChar(user,fi)      CfileRead(user,fi)
 #define OutFileChar(fi,ch)       f_putc(ch,fi)
 #define ScreenChar(user,ch)      putUserChar(user,ch)
 #define KeyInChar(user)          (char)getUserChar(user)
@@ -287,21 +291,21 @@ void LogIt(user_context_t *user,int valu) {          // insert this value into a
 void WarmStart(user_context_t *user) {                 // initialize existing program
   user->i_UserEnd = Peek2(user,EndUser);
   user->i_SubStk = UserEnd;                           // empty subroutine, expression stacks
-  Poke2(user,GoStkTop,user->i_SubStk);
-  user->i_ExpnTop = ExpnStk;
+  Poke2(user,GoStkTop,user->i_SubStk);                // init gosub stack pointer
+  user->i_ExpnTop = ExpnStk;                          // empty expression stack
   user->i_Lino = 0;                                   // not in any line
   user->i_ILPC = 0;                                   // start IL at front
-  user->i_SvPt = InLine;
-  user->i_BP = InLine;
-  user->i_Core[user->i_BP] = 0;
-  user->i_Core[TabHere] = 0;
-  user->i_InLend = InLine;
+  user->i_SvPt = InLine;                              // save parse pointer  
+  user->i_BP = InLine;                                // current parse pointer
+  user->i_Core[user->i_BP] = 0;                       // mark end of input line
+  user->i_Core[TabHere] = 0;                          // reset tab counter
+  user->i_InLend = InLine;                            // current input line end
 } /* ~WarmStart */
 
-void ColdStart(user_context_t *user) {                 // initialize program to empty
-  if (Peek2(user,ILfront) != ILfront+2) 
-    user->i_ILend = Peek2(user,ILfront)+0x800;
-  Poke2(user,UserProg,(user->i_ILend+255)&-256);      // start Basic shortly after IL
+void ColdStart(user_context_t *user) {                // initialize program to empty
+  if (Peek2(user,ILfront) != ILfront+2)               // IL not loaded? 
+    user->i_ILend = Peek2(user,ILfront)+0x800;        // set ILend past loaded IL code estimate
+  Poke2(user,UserProg,(user->i_ILend+255)&-256);      // start Basic shortly after IL as next 256 byte boundary
   if (CoreTop>65535) {
     Poke2(user,EndUser,65534);
     Poke2(user,65534,0xDEAD);}
@@ -345,58 +349,58 @@ void PushSub(user_context_t *user,int valu) {                     // push value 
     SubStk = SubStk-2;
     Poke2(user,GoStkTop,SubStk);
     Poke2(user,SubStk,valu);}
-  if (Debugging>0) ShowSubs(user);}               // ~PushSub
+  if (Debugging>0) ShowSubs(user);}                     // ~PushSub
 
-int PopSub(user_context_t *user) {                       /* pop value off Gosub stack */
-  if (SubStk>=Peek2(user,EndUser)-1) {   /* underflow (nothing in stack).. */
+int PopSub(user_context_t *user) {                      /* pop value off Gosub stack */
+  if (SubStk>=Peek2(user,EndUser)-1) {                  /* underflow (nothing in stack).. */
     TBerror(user);
     return -1;}
   else {
       if (Debugging>1) ShowSubs(user);
     SubStk = SubStk+2;
     Poke2(user,GoStkTop,SubStk);
-    return Peek2(user,SubStk-2);}} /* ~PopSub */
+    return Peek2(user,SubStk-2);}}                      /* ~PopSub */
 
 void PushExBy(user_context_t *user,int valu) {          /* push byte onto expression stack */
-  if (ExpnTop<=InLend) TBerror(user); /* overflow: bumped into input line */
+  if (ExpnTop<=InLend) TBerror(user);                   /* overflow: bumped into input line */
     else Core[--ExpnTop] = (aByte)(valu&255);
-  if (Debugging>0) ShowExSt(user);} /* ~PushExBy */
+  if (Debugging>0) ShowExSt(user);}                     /* ~PushExBy */
 
-int PopExBy(user_context_t *user) {                  /* pop byte off expression stack */
+int PopExBy(user_context_t *user) {                     /* pop byte off expression stack */
   if (ExpnTop<ExpnStk) return (int)Core[ExpnTop++];
-  TBerror(user);                          /* underflow (nothing in stack) */
-  return -1;} /* ~PopExBy */
+  TBerror(user);                                        /* underflow (nothing in stack) */
+  return -1;}                                           /* ~PopExBy */
 
-void PushExInt(user_context_t *user,int valu) {      /* push integer onto expression stack */
+void PushExInt(user_context_t *user,int valu) {         /* push integer onto expression stack */
   ExpnTop = ExpnTop-2;
-  if (ExpnTop<InLend) TBerror(user);  /* overflow: bumped into input line */
+  if (ExpnTop<InLend) TBerror(user);                    /* overflow: bumped into input line */
     else Poke2(user,ExpnTop,valu);
-  if (Debugging>0) ShowExSt(user);} /* ~PushExInt */
+  if (Debugging>0) ShowExSt(user);}                     /* ~PushExInt */
 
-int PopExInt(user_context_t *user) {              /* pop integer off expression stack */
+int PopExInt(user_context_t *user) {                    /* pop integer off expression stack */
   if (++ExpnTop<ExpnStk) return (int)((short)Peek2(user,(ExpnTop++)-1));
-  TBerror(user);    /* underflow (nothing in stack) */
-  return -1;} /* ~PopExInt */
+  TBerror(user);                                        /* underflow (nothing in stack) */
+  return -1;}                                           /* ~PopExInt */
 
-int DeHex(user_context_t *user,char* txt, int ndigs) {                /* decode hex -> int */
+int DeHex(user_context_t *user,char* txt, int ndigs) {  /* decode hex -> int */
   int num = 0;
   char ch = ' ';
-  while (ch<'0')                              /* first skip to num... */
+  while (ch<'0')                                        /* first skip to num... */
     if (ch == '\0') return -1; else ch = DeCaps[((int)*txt++)&127];
-  if (ch>'F' || ch>'9' && ch<'A') return -1;               /* not hex */
-  while ((ndigs--) >0) {                 /* only get requested digits */
-    if (ch<'0' || ch>'F') return num;              /* not a hex digit */
-    if (ch>='A') num = num*16-55+((int)ch);      /* A-F */
-    else if (ch<='9') num = num*16-48+((int)ch); /* 0-9 */
-      else return num;          /* something in between, i.e. not hex */
+  if (ch>'F' || ch>'9' && ch<'A') return -1;            /* not hex */
+  while ((ndigs--) >0) {                                /* only get requested digits */
+    if (ch<'0' || ch>'F') return num;                   /* not a hex digit */
+    if (ch>='A') num = num*16-55+((int)ch);             /* A-F */
+    else if (ch<='9') num = num*16-48+((int)ch);        /* 0-9 */
+      else return num;                                  /* something in between, i.e. not hex */
     ch = DeCaps[((int)*txt++)&127];}
-  return num;} /* ~DeHex */
+  return num;}                                          /* ~DeHex */
 
-int SkipTo(user_context_t *user,int here, char fch) {     /* search for'd past next marker */
+int SkipTo(user_context_t *user,int here, char fch) {   /* search for'd past next marker */
   while (true) {
-    char ch = (char)Core[here++];                /* look at next char */
-    if (ch == fch) return here;                             /* got it */
-    if (ch == '\0') return --here;}} /* ~SkipTo */
+    char ch = (char)Core[here++];                       /* look at next char */
+    if (ch == fch) return here;                         /* got it */
+    if (ch == '\0') return --here;}}                    /* ~SkipTo */
 
 int FindLine(user_context_t *user,int theLine) {         /* find theLine in TB source code */
   int ix;
@@ -444,33 +448,35 @@ void ListIt(user_context_t *user,int frm, int too) {            /* list the stor
 
 // this just takes the il file which was compiled some where and
 // reads the compiled instruction code for it..... lol so not easy to update
-void ConvtIL(user_context_t *user,char* txt) {          /* convert & load TBIL code */
+void ConvtIL(user_context_t *user,char* txt) {          //convert & load TBIL code 
   int valu;
   int counter = 0;
-  char pbuf[64];
-  user->i_ILend = ILfront+2;
+  user->i_ILend = ILfront+2;                            // Used to show il was initialized
   //printf("IL program starts at core[%d]\n\r",user->i_ILend);
-  Poke2(user,ILfront,user->i_ILend);                    /* initialize pointers as promised in TBEK */
-  Poke2(user,ColdGo+1,user->i_ILend);
-  user->i_Core[user->i_ILend] = (aByte)BadOp;           /* illegal op, in case nothing loaded */
+
+  Poke2(user,ILfront,user->i_ILend);                    // initialize pointers as promised in TBEK
+  Poke2(user,ColdGo+1,user->i_ILend);                   // set ColdGo to point to cold start of IL code   
+  user->i_Core[user->i_ILend] = (aByte)BadOp;           // illegal op, in case nothing loaded
   if (txt == NULL) return;
-  while (*txt != '\0') {                                /* get the data.. */
-    while (*txt > '\r') {txt++;}             /* (no code on 1st line) */
-    if (*txt++ == '\0') {break; }            /* no code at all */
-    while (*txt > ' ') {txt++;}              /* skip over address */
+  while (*txt != '\0') {                                // get the data..
+    while (*txt > '\r') {txt++;}                        // (no code on 1st line)
+    if (*txt++ == '\0') {break; }                       // no code at all
+    while (*txt > ' ') {txt++;}                         // skip over address
     if (*txt++ == '\0') {break;}
     while (true) {
-      valu = DeHex(user,txt++, 2);                      /* get a byte */
-      if (valu<0) break;                                /* no more on this line */
-      user->i_Core[user->i_ILend++] = (aByte)valu;      /* insert this byte into code */
+      valu = DeHex(user,txt++, 2);                      // get a byte
+      if (valu<0) break;                                // no more on this line
+      user->i_Core[user->i_ILend++] = (aByte)valu;      // insert this byte into code
       txt++;
       counter+=2;
     }
   }
   //printf("IL Code ends at core[%d]\r\n",user->i_ILend);
-  user->i_XQhere = 0;                                   /* requires new XQ to initialize */
+  user->i_XQhere = 0;                                   // requires new XQ to initialize where to start running il
   user->i_Core[user->i_ILend] = 0;                      // set user code space to 0 for empty program
-  snprintf(pbuf, sizeof(pbuf), "Loaded %d bytes of IL code.\n\r", counter);
+
+  char pbuf[64];
+  snprintf(pbuf, sizeof(pbuf), "Loaded %d bytes of IL code from %d to %d.\n\r", counter, ILfront+2, user->i_ILend-1);
   user_write(user,pbuf);
 }
 

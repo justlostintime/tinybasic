@@ -1,7 +1,13 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed. */
 #ifndef TCP_DATATYPES_H
 #define TCP_DATATYPES_H
 #include "lwip/tcp.h"
-#define TCP_PORT 4242
+#define TCP_PORT 65432                     // Port number for the TCP server
 #define DEBUG_printf(fmt,...) (void)0
 //#define DEBUG_printf printf
 #define BUF_SIZE 256

@@ -1,0 +1,43 @@
+  0  - Zero page registers not actually used in this  implementation
+ 32  - UserProg 32   /* Core address of front of Basic program */
+ 34  - EndUser 34    /* Core address of end of stack/user space */
+ 36  - EndProg 36    /* Core address of end of Basic program */
+ 38  - GoStkTop 38   /* Core address of Gosub stack top */
+ 40  - LinoCore 40   /* Core address of "Current BASIC line number" */
+ 42  - ILPCcore 42   /* Core address of "IL Program Counter" */
+ 44  - BPcore 44     /* Core address of "Basic Pointer" */
+ 46  - SvPtCore 46 
+ 48  - Input Buffer  INLine -> INLend expands till it meets ExpnStk TOP
+128  - Expression Stack  ExpnStk -> ExpnTop expands till it touched the input buffer end
+130  - Variable A-Z 130 to 182
+
+184  - special meaning till IL
+        the space between was occupied by jump vectors and actual code fo warm start and cold start and
+        original io function. Much of it not Currently not used. Much of it emulated through usr functions
+
+191  - TabHere 191   /* Core address of output line size, for tabs */
+255  - WachPoint 255 /* Core address of debug watchpoint USR */
+256  - ColdGo 256    /* Core address of nominal restart USR */
+259  - WarmGo 259    /* Core address of nominal warm start USR */
+262  - InchSub 262   /* Core address of nominal char input USR */
+262  - OutchSub 265  /* Core address of nominal char output USR */
+268  - BreakSub 268  /* Core address of nominal break test USR */
+269  - ExitBasic 269 /* Core address of exit BASIC USR */
+271  - BScode 271    /* Core address of backspace code */
+272  - CanCode 272   /* Core address of line cancel code */
+273  - DumpSub 273   /* Core address of debug core dump USR */
+276  - PeekSub 276   /* Core address of nominal byte peek USR */
+277  - Peek2Sub 277  /* Core address of nominal 2-byte peek USR */
+280  - PokeSub 280   /* Core address of nominal byte poke USR */
+283  - TrLogSub 283  /* Core address of debug trace log USR */
+
+
+286  - Flag to identify if il was loaded 2 bytes set to 286+2 when ip is loaded else set to 286(ILfront)
+     - Continues for length of IL interpreter ILEnd contains the end of CODE, ILFront+2 is the beginning
+     - the Coldstart address is set to this as well
+xxx  - Start of user program space IL end address rounded up to next even multiple of 256 SrcStart- SrcEnd
+
+xxx+n- Source End SrcEnd
+
+    
+16K  - UserEnd End of program space; GoSub Stack SubStk  Range UserEnd and < SrcEnd

@@ -1,3 +1,9 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+
+ Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+ Everyone is permitted to copy and distribute verbatim copies
+ of this license document, but changing it is not allowed. */
 // Definitions to manage users logged in to the time share system
 #ifndef user_datatypes_h
 #define user_datatypes_h
@@ -90,13 +96,14 @@ typedef struct user_context {
     int16_t i_BP, i_SvPt;               // current, saved TB parse pointer
     int16_t i_SubStk, i_ExpnTop;        // stack pointers
     int16_t i_InLend, i_SrcEnd;         // current input line & TB source end
-    int16_t i_UserEnd;                  // end of memory used bu program
+    int16_t i_UserEnd;                  // end of memory used by programs id end pysical memory
     int16_t i_ILend, i_XQhere;          // end of IL code, start of execute loop
     int16_t i_Broken;                   // true to stop execution or listing
     int16_t  lineIndex;                 // where the ring buffer ends or next entry goes
     int16_t  lineReadPos;               // basically the head of the ring buffer
     int16_t  pending_console_read;      // Set when an irq for console data available
     int16_t  available_lines;           // this contains the count of lines in the buffer
+    int16_t  failed_logins;             // counts the number of failed login attempts
 
     // telnet command process variables
     int16_t  telnet_cmd;

@@ -1,3 +1,9 @@
+/*                   GNU AFFERO GENERAL PUBLIC LICENSE
+                       Version 3, 19 November 2007
+*/
+
+
+
 // filepath: /home/brian/Pico_2_w/tinybasic/terminal.c
 
 #include <stdio.h>
